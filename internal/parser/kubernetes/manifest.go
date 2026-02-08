@@ -689,6 +689,7 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 							Metadata: map[string]string{"via": "volume"},
 						})
 					}
+				ensureNode(nodeMap, result, secretID, vol.Secret.SecretName, models.AssetSecret, ns, sourceFile, now)
 				}
 				if vol.ConfigMap != nil && vol.ConfigMap.Name != "" {
 					cmID := k8sNodeID("configmap", ns, vol.ConfigMap.Name)
@@ -703,6 +704,7 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 							Metadata: map[string]string{"via": "volume"},
 						})
 					}
+				ensureNode(nodeMap, result, cmID, vol.ConfigMap.Name, models.AssetSecret, ns, sourceFile, now)
 				}
 			}
 
@@ -723,6 +725,7 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 								Metadata: map[string]string{"via": "envFrom"},
 							})
 						}
+					ensureNode(nodeMap, result, secretID, ef.SecretRef.Name, models.AssetSecret, ns, sourceFile, now)
 					}
 					if ef.ConfigMapRef != nil && ef.ConfigMapRef.Name != "" {
 						cmID := k8sNodeID("configmap", ns, ef.ConfigMapRef.Name)
@@ -737,6 +740,7 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 								Metadata: map[string]string{"via": "envFrom"},
 							})
 						}
+					ensureNode(nodeMap, result, cmID, ef.ConfigMapRef.Name, models.AssetSecret, ns, sourceFile, now)
 					}
 				}
 				for _, env := range c.Env {
@@ -756,6 +760,7 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 								Metadata: map[string]string{"via": "env"},
 							})
 						}
+					ensureNode(nodeMap, result, secretID, env.ValueFrom.SecretKeyRef.Name, models.AssetSecret, ns, sourceFile, now)
 					}
 					if env.ValueFrom.ConfigMapKeyRef != nil && env.ValueFrom.ConfigMapKeyRef.Name != "" {
 						cmID := k8sNodeID("configmap", ns, env.ValueFrom.ConfigMapKeyRef.Name)
@@ -770,6 +775,7 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 								Metadata: map[string]string{"via": "env"},
 							})
 						}
+					ensureNode(nodeMap, result, cmID, env.ValueFrom.ConfigMapKeyRef.Name, models.AssetSecret, ns, sourceFile, now)
 					}
 				}
 			}
@@ -875,6 +881,27 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 	}
 
 	return result, nil
+}
+
+// ensureNode auto-creates a node if it doesn't already exist in nodeMap.
+// This prevents FK constraint violations when edges reference secrets or
+// configmaps that aren't defined as explicit resources in the manifest.
+func ensureNode(nodeMap map[string]models.Node, result *parser.ParseResult, id, name string, assetType models.AssetType, ns, sourceFile string, now time.Time) {
+	if _, exists := nodeMap[id]; !exists {
+		node := models.Node{
+			ID:         id,
+			Name:       name,
+			Type:       assetType,
+			Source:     "kubernetes",
+			SourceFile: sourceFile,
+			Provider:   "kubernetes",
+			Metadata:   map[string]string{"namespace": ns, "auto_created": "true"},
+			LastSeen:   now,
+			FirstSeen:  now,
+		}
+		nodeMap[id] = node
+		result.Nodes = append(result.Nodes, node)
+	}
 }
 
 // k8sNodeID builds a namespace-scoped node ID for Kubernetes resources.

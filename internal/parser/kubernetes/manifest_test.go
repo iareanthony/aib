@@ -33,7 +33,7 @@ func TestParseManifests_SampleFile(t *testing.T) {
 	// Service: api-backend-svc, redis-svc
 	// Ingress: api-ingress
 	// Certificate: api-cert
-	// Auto-created secrets: api-secret, api-tls-cert (from env ref and TLS/volume)
+	// Auto-created secrets: api-secret (env secretKeyRef), api-tls-cert (volume + TLS/cert-manager)
 	wantNodes := []string{
 		"k8s:namespace:production",
 		"k8s:secret:production/db-credentials",
@@ -46,6 +46,7 @@ func TestParseManifests_SampleFile(t *testing.T) {
 		"k8s:ingress:production/api-ingress",
 		"k8s:certificate:production/api-cert",
 		"k8s:secret:production/api-tls-cert",
+		"k8s:secret:production/api-secret",
 	}
 
 	for _, id := range wantNodes {
@@ -54,8 +55,8 @@ func TestParseManifests_SampleFile(t *testing.T) {
 		}
 	}
 
-	if len(result.Nodes) < 11 {
-		t.Errorf("nodes = %d, want >= 11", len(result.Nodes))
+	if len(result.Nodes) < 12 {
+		t.Errorf("nodes = %d, want >= 12", len(result.Nodes))
 	}
 }
 
@@ -322,5 +323,110 @@ func TestParseManifests_RBAC_Edges(t *testing.T) {
 	// HPA → Deployment (managed_by via scaleTargetRef)
 	if edgeMap["k8s:pod:production/api-backend->k8s:hpa:production/api-hpa"] != models.EdgeManagedBy {
 		t.Error("missing managed_by edge: api-backend -> api-hpa (via scaleTargetRef)")
+	}
+}
+
+func TestAutoCreateMissingSecretAndConfigMap(t *testing.T) {
+	// A Deployment that references secrets and configmaps via all 6 mechanisms,
+	// none of which are defined as explicit resources in the manifest.
+	manifest := `---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+  namespace: test
+spec:
+  template:
+    metadata:
+      labels:
+        app: myapp
+    spec:
+      containers:
+        - name: app
+          image: myapp:latest
+          envFrom:
+            - secretRef:
+                name: envfrom-secret
+            - configMapRef:
+                name: envfrom-cm
+          env:
+            - name: KEY1
+              valueFrom:
+                secretKeyRef:
+                  name: env-secret
+                  key: k
+            - name: KEY2
+              valueFrom:
+                configMapKeyRef:
+                  name: env-cm
+                  key: k
+      volumes:
+        - name: vol-secret
+          secret:
+            secretName: vol-secret
+        - name: vol-cm
+          configMap:
+            name: vol-cm
+`
+	result, err := parseManifests([]byte(manifest), "test.yaml", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nodeIDs := make(map[string]models.Node)
+	for _, n := range result.Nodes {
+		nodeIDs[n.ID] = n
+	}
+
+	// All 6 referenced resources should be auto-created as nodes
+	wantAutoCreated := []struct {
+		id   string
+		name string
+	}{
+		{"k8s:secret:test/vol-secret", "vol-secret"},
+		{"k8s:configmap:test/vol-cm", "vol-cm"},
+		{"k8s:secret:test/envfrom-secret", "envfrom-secret"},
+		{"k8s:configmap:test/envfrom-cm", "envfrom-cm"},
+		{"k8s:secret:test/env-secret", "env-secret"},
+		{"k8s:configmap:test/env-cm", "env-cm"},
+	}
+
+	for _, want := range wantAutoCreated {
+		n, ok := nodeIDs[want.id]
+		if !ok {
+			t.Errorf("missing auto-created node %s", want.id)
+			continue
+		}
+		if n.Name != want.name {
+			t.Errorf("node %s: name = %q, want %q", want.id, n.Name, want.name)
+		}
+		if n.Metadata["auto_created"] != "true" {
+			t.Errorf("node %s: missing auto_created metadata", want.id)
+		}
+		if n.Metadata["namespace"] != "test" {
+			t.Errorf("node %s: namespace = %q, want test", want.id, n.Metadata["namespace"])
+		}
+	}
+
+	// Verify edges also exist for all 6
+	edgeMap := make(map[string]models.EdgeType)
+	for _, e := range result.Edges {
+		edgeMap[e.FromID+"->"+e.ToID] = e.Type
+	}
+
+	wlID := "k8s:pod:test/myapp"
+	wantEdges := map[string]models.EdgeType{
+		wlID + "->k8s:secret:test/vol-secret":     models.EdgeMountsSecret,
+		wlID + "->k8s:configmap:test/vol-cm":       models.EdgeDependsOn,
+		wlID + "->k8s:secret:test/envfrom-secret":  models.EdgeMountsSecret,
+		wlID + "->k8s:configmap:test/envfrom-cm":   models.EdgeDependsOn,
+		wlID + "->k8s:secret:test/env-secret":      models.EdgeMountsSecret,
+		wlID + "->k8s:configmap:test/env-cm":        models.EdgeDependsOn,
+	}
+
+	for key, wantType := range wantEdges {
+		if edgeMap[key] != wantType {
+			t.Errorf("missing or wrong edge %s: got %v, want %v", key, edgeMap[key], wantType)
+		}
 	}
 }
