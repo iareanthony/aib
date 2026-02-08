@@ -1112,16 +1112,16 @@ func serveCmd() *cobra.Command {
 
 			tracker := certs.NewTracker(store, cfg.Certs.AlertThresholds, logger)
 			sc := scanner.New(store, cfg, logger)
-			srv := server.New(store, engine, tracker, sc, logger, listen, readOnly || cfg.Server.ReadOnly, cfg.Server.APIToken, cfg.Server.CORSOrigin, version)
+			srv := server.New(store, engine, tracker, sc, logger, listen, readOnly || cfg.Server.ReadOnly, cfg.Server.APIToken, cfg.Server.CORSOrigin, cfg.Scan.AllowedPaths, version)
 
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 			defer stop()
 
-			// On-startup scan
+			// On-startup scan (cancelled when server shuts down)
 			if cfg.Scan.OnStartup && len(cfg.Sources.Terraform)+len(cfg.Sources.Kubernetes)+len(cfg.Sources.Ansible)+len(cfg.Sources.Compose) > 0 {
 				go func() {
 					logger.Info("running startup scan")
-					results := sc.RunAllConfigured(context.Background())
+					results := sc.RunAllConfigured(ctx)
 					for _, r := range results {
 						if r.Error != nil {
 							logger.Error("startup scan failed", "error", r.Error)

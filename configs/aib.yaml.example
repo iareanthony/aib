@@ -44,10 +44,13 @@ alerts:
 
 server:
   listen: ":8080"
-  read_only: false
+  read_only: true                      # Set to false + api_token to enable scan triggers via API
   api_token: "${AIB_API_TOKEN}"        # Set to enable bearer token auth on /api/* routes
   cors_origin: ""                      # Set to "*" or specific origin to enable CORS
 
 scan:
   schedule: "4h"                       # Go duration format: 4h, 30m, 1h30m (empty = disabled)
   on_startup: true
+  allowed_paths:                       # Restrict API-triggered scans to these dirs
+    - "/opt/infra/terraform"
+    - "/opt/infra/k8s"

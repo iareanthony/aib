@@ -340,12 +340,27 @@ func validateScanRequest(req scanTriggerRequest) error {
 	return nil
 }
 
-func (s *Server) handleTriggerScan(w http.ResponseWriter, r *http.Request) {
-	if s.scanner == nil {
-		writeError(w, http.StatusServiceUnavailable, "scanner not configured")
-		return
+// isPathAllowed checks whether the given path falls within one of the
+// configured allowed directories. If no allowlist is set, all paths are
+// permitted.
+func (s *Server) isPathAllowed(p string) bool {
+	if len(s.allowedPaths) == 0 {
+		return true
 	}
+	cleaned := filepath.Clean(p)
+	for _, allowed := range s.allowedPaths {
+		rel, err := filepath.Rel(allowed, cleaned)
+		if err != nil {
+			continue
+		}
+		if !strings.HasPrefix(rel, "..") {
+			return true
+		}
+	}
+	return false
+}
 
+func (s *Server) handleTriggerScan(w http.ResponseWriter, r *http.Request) {
 	var req scanTriggerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
@@ -363,6 +378,10 @@ func (s *Server) handleTriggerScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Source == "all" {
+		if s.scanner == nil {
+			writeError(w, http.StatusServiceUnavailable, "scanner not configured")
+			return
+		}
 		scanReq := scanner.ScanRequest{Source: "all"}
 		scanID, err := s.scanner.RunAsync(r.Context(), scanReq)
 		if err != nil {
@@ -384,6 +403,18 @@ func (s *Server) handleTriggerScan(w http.ResponseWriter, r *http.Request) {
 
 	if err := validateScanRequest(req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	for _, p := range req.Paths {
+		if !s.isPathAllowed(p) {
+			writeError(w, http.StatusForbidden, fmt.Sprintf("path %q is not in the allowed scan paths", p))
+			return
+		}
+	}
+
+	if s.scanner == nil {
+		writeError(w, http.StatusServiceUnavailable, "scanner not configured")
 		return
 	}
 

@@ -33,7 +33,7 @@ func newTestServer(t *testing.T, apiToken string) (*httptest.Server, *graph.SQLi
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	tracker := certs.NewTracker(store, nil, logger)
 
-	s := New(store, engine, tracker, nil, logger, ":0", false, apiToken, "", "test")
+	s := New(store, engine, tracker, nil, logger, ":0", false, apiToken, "", nil, "test")
 
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, s)
@@ -439,10 +439,8 @@ func TestTriggerScan_InvalidSource(t *testing.T) {
 	}
 	defer resp.Body.Close() //nolint:errcheck // test cleanup
 
-	// Even though scanner is nil, source validation happens before scanner check
-	// Actually scanner nil check happens first → 503
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503 (scanner nil checked first)", resp.StatusCode)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
 	}
 }
 
@@ -686,16 +684,18 @@ func TestMetrics_NoAuth(t *testing.T) {
 func TestTriggerScan_PathTraversal(t *testing.T) {
 	ts, _ := newTestServer(t, "")
 
-	body := strings.NewReader(`{"source":"terraform","paths":["/home/../etc/passwd"]}`)
+	// Path with .. that stays absolute after Clean (e.g., /home/../etc/passwd → /etc/passwd)
+	// passes validation since the cleaned result has no traversal.
+	// Use a relative traversal path to test actual rejection.
+	body := strings.NewReader(`{"source":"terraform","paths":["../etc/passwd"]}`)
 	resp, err := http.Post(ts.URL+"/api/v1/scan", "application/json", body)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close() //nolint:errcheck // test cleanup
 
-	// Scanner nil check happens first → 503
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503 (scanner nil checked first)", resp.StatusCode)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 (path traversal rejected)", resp.StatusCode)
 	}
 }
 
@@ -832,5 +832,79 @@ func TestHandlePlanImpact(t *testing.T) {
 	}
 	if int(pn["affected_count"].(float64)) != 1 {
 		t.Errorf("affected_count = %v, want 1", pn["affected_count"])
+	}
+}
+
+func newTestServerWithAllowedPaths(t *testing.T, allowedPaths []string) *httptest.Server {
+	t.Helper()
+	dbPath := t.TempDir() + "/test.db"
+	store, err := graph.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Init(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	engine := graph.NewLocalEngine(store)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	tracker := certs.NewTracker(store, nil, logger)
+
+	s := New(store, engine, tracker, nil, logger, ":0", false, "", "", allowedPaths, "test")
+
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, s)
+
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	return ts
+}
+
+func TestTriggerScan_AllowedPaths_Blocked(t *testing.T) {
+	ts := newTestServerWithAllowedPaths(t, []string{"/opt/infra/terraform"})
+
+	body := strings.NewReader(`{"source":"terraform","paths":["/etc/secrets"]}`)
+	resp, err := http.Post(ts.URL+"/api/v1/scan", "application/json", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // test cleanup
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestTriggerScan_AllowedPaths_Permitted(t *testing.T) {
+	ts := newTestServerWithAllowedPaths(t, []string{"/opt/infra/terraform"})
+
+	body := strings.NewReader(`{"source":"terraform","paths":["/opt/infra/terraform/main.tfstate"]}`)
+	resp, err := http.Post(ts.URL+"/api/v1/scan", "application/json", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // test cleanup
+
+	// Scanner is nil, so path check passes but scanner returns 503
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503 (scanner nil, but path check passed)", resp.StatusCode)
+	}
+}
+
+func TestTriggerScan_AllowedPaths_Empty(t *testing.T) {
+	ts := newTestServerWithAllowedPaths(t, nil)
+
+	body := strings.NewReader(`{"source":"terraform","paths":["/any/path/state.tfstate"]}`)
+	resp, err := http.Post(ts.URL+"/api/v1/scan", "application/json", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // test cleanup
+
+	// No allowlist = all paths allowed; scanner nil → 503
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503 (no allowlist, scanner nil)", resp.StatusCode)
 	}
 }

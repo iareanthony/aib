@@ -33,8 +33,11 @@ type Server struct {
 	version    string
 	srv        *http.Server
 
+	allowedPaths []string
+
 	// rate limiter state
-	limiters   sync.Map // map[string]*ipLimiter
+	limiters sync.Map // map[string]*ipLimiter
+	done     chan struct{}
 }
 
 type ipLimiter struct {
@@ -43,18 +46,19 @@ type ipLimiter struct {
 }
 
 // New creates a new Server.
-func New(store *graph.SQLiteStore, engine graph.GraphEngine, tracker *certs.Tracker, sc *scanner.Scanner, logger *slog.Logger, listen string, readOnly bool, apiToken string, corsOrigin string, version string) *Server {
+func New(store *graph.SQLiteStore, engine graph.GraphEngine, tracker *certs.Tracker, sc *scanner.Scanner, logger *slog.Logger, listen string, readOnly bool, apiToken string, corsOrigin string, allowedPaths []string, version string) *Server {
 	return &Server{
-		store:      store,
-		engine:     engine,
-		tracker:    tracker,
-		scanner:    sc,
-		logger:     logger,
-		listen:     listen,
-		readOnly:   readOnly,
-		apiToken:   apiToken,
-		corsOrigin: corsOrigin,
-		version:    version,
+		store:        store,
+		engine:       engine,
+		tracker:      tracker,
+		scanner:      sc,
+		logger:       logger,
+		listen:       listen,
+		readOnly:     readOnly,
+		apiToken:     apiToken,
+		corsOrigin:   corsOrigin,
+		allowedPaths: allowedPaths,
+		version:      version,
 	}
 }
 
@@ -80,22 +84,31 @@ func limitBody(next http.Handler) http.Handler {
 	})
 }
 
-// rateLimiter limits API requests to 10/sec burst 20 per client IP.
-func (s *Server) rateLimiter(next http.Handler) http.Handler {
-	// Clean up stale entries every 5 minutes.
+// startLimiterCleanup runs background cleanup of stale rate-limiter entries.
+// It stops when the done channel is closed.
+func (s *Server) startLimiterCleanup() {
 	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
 		for {
-			time.Sleep(5 * time.Minute)
-			s.limiters.Range(func(key, value any) bool {
-				il := value.(*ipLimiter)
-				if time.Since(il.lastSeen) > 10*time.Minute {
-					s.limiters.Delete(key)
-				}
-				return true
-			})
+			select {
+			case <-s.done:
+				return
+			case <-ticker.C:
+				s.limiters.Range(func(key, value any) bool {
+					il := value.(*ipLimiter)
+					if time.Since(il.lastSeen) > 10*time.Minute {
+						s.limiters.Delete(key)
+					}
+					return true
+				})
+			}
 		}
 	}()
+}
 
+// rateLimiter limits API requests to 10/sec burst 20 per client IP.
+func (s *Server) rateLimiter(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/api/") {
 			next.ServeHTTP(w, r)
@@ -160,6 +173,8 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 
 // Start starts the HTTP server.
 func (s *Server) Start() error {
+	s.done = make(chan struct{})
+
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, s)
 
@@ -173,6 +188,8 @@ func (s *Server) Start() error {
 	handler = s.corsMiddleware(handler)
 	handler = limitBody(handler)
 	handler = securityHeaders(handler)
+
+	s.startLimiterCleanup()
 
 	s.srv = &http.Server{
 		Addr:         s.listen,
@@ -188,6 +205,9 @@ func (s *Server) Start() error {
 	} else {
 		s.logger.Warn("API authentication disabled (set server.api_token to enable)")
 	}
+	if s.readOnly {
+		s.logger.Info("server running in read-only mode (scan triggers disabled)")
+	}
 	fmt.Printf("AIB server running at http://localhost%s\n", s.listen)
 
 	return s.srv.ListenAndServe()
@@ -195,5 +215,8 @@ func (s *Server) Start() error {
 
 // Shutdown gracefully shuts down the server.
 func (s *Server) Shutdown(ctx context.Context) error {
+	if s.done != nil {
+		close(s.done)
+	}
 	return s.srv.Shutdown(ctx)
 }

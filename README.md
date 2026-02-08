@@ -1,3 +1,5 @@
+[![CI](https://github.com/matijazezelj/aib/actions/workflows/ci.yml/badge.svg)](https://github.com/matijazezelj/aib/actions/workflows/ci.yml)
+
 # AIB — Assets in a Box
 
 Lightweight, self-hosted infrastructure asset discovery and dependency mapping tool. Parses IaC sources (Terraform, Helm/K8s manifests, Ansible), builds a unified asset dependency graph, tracks certificate expiry, and provides blast radius analysis — "what breaks if X fails?"
@@ -558,8 +560,13 @@ Check scan progress with `GET /api/v1/scan/status`:
 
 #### Security
 
+> **Warning:** AIB is designed for trusted internal networks. Do **not** expose
+> to the public internet without a reverse proxy, TLS, and authentication.
+
 The server includes the following security features:
 
+- **Read-only by default**: Server starts in read-only mode. Set `read_only: false` with an `api_token` to enable scan triggers via API
+- **Scan path allowlist**: Set `scan.allowed_paths` to restrict which directories the API can scan
 - **Security headers**: `X-Content-Type-Options`, `X-Frame-Options`, `Content-Security-Policy`, `Referrer-Policy` on all responses
 - **Rate limiting**: API routes are limited to 10 requests/sec (burst 20) per client IP. Returns `429 Too Many Requests` when exceeded
 - **Request body limits**: POST/PUT/PATCH bodies are capped at 1 MB
@@ -596,13 +603,16 @@ alerts:
 
 server:
   listen: ":8080"
-  read_only: false
+  read_only: true                      # set to false + api_token to enable scan triggers
   api_token: "${AIB_API_TOKEN}"        # bearer token for /api/* routes
   cors_origin: ""                      # CORS origin ("*" for any)
 
 scan:
   schedule: "4h"                       # periodic scan interval (Go duration)
   on_startup: true                     # scan all configured sources on startup
+  allowed_paths:                       # restrict API-triggered scans to these dirs
+    - "/opt/infra/terraform"
+    - "/opt/infra/k8s"
 ```
 
 Sensitive fields (`api_token`, `password`, webhook `url` and `headers`) support `${ENV_VAR}` expansion.
@@ -715,6 +725,14 @@ Helm charts are supported via `--helm` flag (shells out to `helm template`).
 | `service` task | System service | `service` |
 
 Edges (`managed_by`) are created from playbook task analysis, linking containers and services to the hosts they run on.
+
+## Known Limitations
+
+- **Not designed for public internet exposure** — intended for trusted internal networks behind a reverse proxy with TLS
+- **Single-node only** — no high availability or clustering support
+- **No RBAC** — a single shared bearer token protects all API routes
+- **SQLite write serialization** — under heavy concurrent write loads, SQLite's single-writer model may become a bottleneck
+- **Shell-out dependencies** — `terraform`, `helm`, and `kubectl` must be installed for remote state, Helm chart, and live cluster scanning respectively
 
 ## Development
 

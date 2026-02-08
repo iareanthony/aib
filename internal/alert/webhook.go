@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 )
@@ -54,6 +55,9 @@ func (w *WebhookAlerter) Send(ctx context.Context, event Event) error {
 		return fmt.Errorf("sending webhook: %w", err)
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort cleanup
+
+	// Drain body to enable HTTP connection reuse.
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("webhook returned status %d", resp.StatusCode)

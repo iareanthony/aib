@@ -108,8 +108,9 @@ type ServerConfig struct {
 
 // ScanConfig configures automatic scan scheduling.
 type ScanConfig struct {
-	Schedule  string `mapstructure:"schedule"`
-	OnStartup bool   `mapstructure:"on_startup"`
+	Schedule     string   `mapstructure:"schedule"`
+	OnStartup    bool     `mapstructure:"on_startup"`
+	AllowedPaths []string `mapstructure:"allowed_paths"`
 }
 
 // Load reads the configuration from file and environment variables.
@@ -134,7 +135,7 @@ func Load(cfgFile string) (*Config, error) {
 	viper.SetDefault("storage.memgraph.enabled", false)
 	viper.SetDefault("storage.memgraph.uri", "bolt://localhost:7687")
 	viper.SetDefault("server.listen", ":8080")
-	viper.SetDefault("server.read_only", false)
+	viper.SetDefault("server.read_only", true)
 	viper.SetDefault("certs.probe_enabled", true)
 	viper.SetDefault("certs.probe_interval", "6h")
 	viper.SetDefault("certs.alert_thresholds", []int{90, 60, 30, 14, 7, 1})
@@ -225,6 +226,10 @@ func (c *Config) Validate() error {
 		errs = append(errs, fmt.Errorf("server.api_token is too short (%d chars), use at least 8 characters", len(c.Server.APIToken)))
 	}
 
+	if !c.Server.ReadOnly && c.Server.APIToken == "" {
+		errs = append(errs, fmt.Errorf("server.api_token is required when server.read_only is false"))
+	}
+
 	if c.Scan.Schedule != "" {
 		d, err := time.ParseDuration(c.Scan.Schedule)
 		if err != nil {
@@ -234,6 +239,12 @@ func (c *Config) Validate() error {
 			}
 		} else if d < time.Minute {
 			errs = append(errs, fmt.Errorf("scan.schedule must be >= 1m, got %s", d))
+		}
+	}
+
+	for i, p := range c.Scan.AllowedPaths {
+		if !filepath.IsAbs(filepath.Clean(p)) {
+			errs = append(errs, fmt.Errorf("scan.allowed_paths[%d] %q must be absolute", i, p))
 		}
 	}
 

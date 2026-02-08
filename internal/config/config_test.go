@@ -33,8 +33,8 @@ func TestDefaults(t *testing.T) {
 	if cfg.Server.Listen != ":8080" {
 		t.Errorf("server.listen = %q, want :8080", cfg.Server.Listen)
 	}
-	if cfg.Server.ReadOnly {
-		t.Error("server.read_only should be false by default")
+	if !cfg.Server.ReadOnly {
+		t.Error("server.read_only should be true by default")
 	}
 	if !cfg.Certs.ProbeEnabled {
 		t.Error("certs.probe_enabled should be true by default")
@@ -311,6 +311,40 @@ func TestValidate_MultipleErrors(t *testing.T) {
 	}
 }
 
+func TestValidate_WritableModeRequiresToken(t *testing.T) {
+	cfg, _ := loadDefaults()
+	cfg.Server.ReadOnly = false
+	cfg.Server.APIToken = ""
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for writable mode without token")
+	}
+	if !strings.Contains(err.Error(), "api_token is required") {
+		t.Errorf("error should mention api_token requirement, got: %v", err)
+	}
+}
+
+func TestValidate_WritableModeWithToken(t *testing.T) {
+	cfg, _ := loadDefaults()
+	cfg.Server.ReadOnly = false
+	cfg.Server.APIToken = "my-secure-token"
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("writable mode with token should be valid, got: %v", err)
+	}
+}
+
+func TestValidate_AllowedPaths_Relative(t *testing.T) {
+	cfg, _ := loadDefaults()
+	cfg.Scan.AllowedPaths = []string{"relative/path"}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for relative allowed path")
+	}
+	if !strings.Contains(err.Error(), "must be absolute") {
+		t.Errorf("error should mention absolute path, got: %v", err)
+	}
+}
+
 // loadDefaults creates a Config with viper defaults without reading a file.
 func loadDefaults() (*Config, error) {
 	return &Config{
@@ -323,7 +357,7 @@ func loadDefaults() (*Config, error) {
 		},
 		Server: ServerConfig{
 			Listen:   ":8080",
-			ReadOnly: false,
+			ReadOnly: true,
 		},
 		Certs: CertsConfig{
 			ProbeEnabled:    true,
