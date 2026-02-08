@@ -2,6 +2,15 @@
 
 All notable changes to AIB are documented here. See [GitHub Releases](https://github.com/matijazezelj/aib/releases) for download links.
 
+## [0.3.3] - 2026-02-08
+
+### Added
+- **Visible/total counter**: header stats show "X / Y nodes | X / Y edges" that update live on filter, search, and focus changes
+- **Edge label controls**: labels hidden by default, revealed on hover/selection; edge-type filter pills toggle edge visibility
+- **Focus mode**: upstream/downstream depth controls (1–5) in detail panel, "Secrets Touched" BFS, "External Exposure" path detection
+- **Label decluttering**: zoom-based label hiding below threshold; parallel edges fan out with unbundled bezier curves
+- **Privacy mode**: masks sensitive node labels (secret, certificate, kms_key), persists in localStorage, keyboard shortcut `p`
+
 ## [0.3.2] - 2026-02-08
 
 ### Fixed
