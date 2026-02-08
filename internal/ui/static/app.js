@@ -37,8 +37,14 @@ const GROUP_COLORS = [
     '#3d1f2d', '#2d3d1f', '#1f3d3d', '#3d3d1f', '#3d1f3d',
 ];
 
+const SENSITIVE_TYPES = new Set(['secret', 'certificate', 'kms_key']);
+const ZOOM_LABEL_THRESHOLD = 0.6;
+
 let cy;
 let graphData;
+let privacyMode = localStorage.getItem('privacyMode') === 'true';
+let selectedNodeId = null;
+let disabledEdgeTypes = new Set();
 
 function esc(str) {
     const d = document.createElement('div');
@@ -46,10 +52,91 @@ function esc(str) {
     return d.innerHTML;
 }
 
+function maskSensitive(str) {
+    if (!str) return '';
+    return str.replace(/./g, '*').slice(0, 8) + '\u2026';
+}
+
 async function fetchJSON(url) {
     const resp = await fetch(url);
     return resp.json();
 }
+
+// --- Visible/Total Counter ---
+
+function updateVisibleCount() {
+    const visibleNodes = cy.nodes('[!isGroup]').filter(':visible').not('.dimmed').length;
+    const totalNodes = cy.nodes('[!isGroup]').length;
+    const visibleEdges = cy.edges().filter(':visible').not('.dimmed').length;
+    const totalEdges = cy.edges().length;
+    document.getElementById('stat-nodes-visible').textContent = visibleNodes;
+    document.getElementById('stat-edges-visible').textContent = visibleEdges;
+    document.getElementById('stat-nodes').textContent = totalNodes;
+    document.getElementById('stat-edges').textContent = totalEdges;
+}
+
+// --- Edge Type Filter Pills ---
+
+function buildEdgeFilterPills() {
+    const container = document.getElementById('edge-filters');
+    container.innerHTML = '';
+    const edgeTypes = new Set();
+    (graphData.edges || []).forEach(e => edgeTypes.add(e.type));
+    if (edgeTypes.size === 0) return;
+
+    const sorted = Array.from(edgeTypes).sort();
+    sorted.forEach(type => {
+        const pill = document.createElement('button');
+        pill.className = 'edge-pill';
+        pill.textContent = type;
+        pill.dataset.edgeType = type;
+        if (disabledEdgeTypes.has(type)) pill.classList.add('inactive');
+        pill.addEventListener('click', () => {
+            pill.classList.toggle('inactive');
+            if (pill.classList.contains('inactive')) {
+                disabledEdgeTypes.add(type);
+            } else {
+                disabledEdgeTypes.delete(type);
+            }
+            applyEdgeTypeFilter();
+            updateVisibleCount();
+        });
+        container.appendChild(pill);
+    });
+}
+
+function applyEdgeTypeFilter() {
+    cy.edges().forEach(e => {
+        e.toggleClass('dimmed', disabledEdgeTypes.has(e.data('label')));
+    });
+}
+
+// --- Privacy Mode ---
+
+function getNodeLabel(ele) {
+    if (privacyMode && SENSITIVE_TYPES.has(ele.data('assetType'))) {
+        return maskSensitive(ele.data('label'));
+    }
+    return ele.data('label');
+}
+
+function togglePrivacyMode() {
+    privacyMode = !privacyMode;
+    localStorage.setItem('privacyMode', privacyMode);
+    document.getElementById('btn-privacy').classList.toggle('active', privacyMode);
+    cy.style().update();
+    // Re-render detail panel if open
+    if (selectedNodeId) showDetail(selectedNodeId);
+}
+
+function maskDetailValue(key, value) {
+    if (!privacyMode) return esc(value);
+    const sensitiveKeys = new Set(['id', 'name', 'arn', 'dns_name', 'hostname', 'ip', 'endpoint']);
+    if (sensitiveKeys.has(key.toLowerCase())) return esc(maskSensitive(String(value)));
+    return esc(value);
+}
+
+// --- Init ---
 
 async function init() {
     const [gd, stats] = await Promise.all([
@@ -58,8 +145,13 @@ async function init() {
     ]);
     graphData = gd;
 
-    document.getElementById('stats').textContent =
-        `${stats.nodes_total || 0} nodes | ${stats.edges_total || 0} edges | ${stats.expiring_certs || 0} expiring certs`;
+    // Stats header
+    document.getElementById('stat-nodes').textContent = stats.nodes_total || 0;
+    document.getElementById('stat-edges').textContent = stats.edges_total || 0;
+    document.getElementById('stat-certs').textContent = `${stats.expiring_certs || 0} expiring certs`;
+
+    // Privacy button initial state
+    document.getElementById('btn-privacy').classList.toggle('active', privacyMode);
 
     // Populate filter dropdowns
     const types = new Set((graphData.nodes || []).map(n => n.type));
@@ -68,6 +160,9 @@ async function init() {
     const sourceSelect = document.getElementById('filter-source');
     types.forEach(t => { const o = document.createElement('option'); o.value = t; o.textContent = t; typeSelect.appendChild(o); });
     sources.forEach(s => { const o = document.createElement('option'); o.value = s; o.textContent = s; sourceSelect.appendChild(o); });
+
+    // Build edge filter pills
+    buildEdgeFilterPills();
 
     // Build Cytoscape elements
     const elements = buildElements(graphData, '');
@@ -79,9 +174,9 @@ async function init() {
             {
                 selector: 'node[!isGroup]',
                 style: {
-                    'label': 'data(label)',
-                    'shape': el => TYPE_SHAPES[el.data('type')] || 'ellipse',
-                    'background-color': el => TYPE_COLORS[el.data('type')] || '#D5D8DC',
+                    'label': function(ele) { return getNodeLabel(ele); },
+                    'shape': el => TYPE_SHAPES[el.data('assetType')] || 'ellipse',
+                    'background-color': el => TYPE_COLORS[el.data('assetType')] || '#D5D8DC',
                     'color': '#c9d1d9',
                     'font-size': '10px',
                     'text-valign': 'bottom',
@@ -112,12 +207,22 @@ async function init() {
                     'label': 'data(label)',
                     'font-size': '8px',
                     'color': '#8b949e',
+                    'text-opacity': 0,
                     'line-color': '#30363d',
                     'target-arrow-color': '#30363d',
                     'target-arrow-shape': 'triangle',
-                    'curve-style': 'bezier',
+                    'curve-style': function(ele) { return ele.data('curveStyle') || 'bezier'; },
+                    'control-point-distances': function(ele) { return ele.data('cpDist') || 0; },
                     'width': 1.5,
                 },
+            },
+            {
+                selector: 'edge:selected',
+                style: { 'text-opacity': 1, 'line-color': '#58a6ff', 'target-arrow-color': '#58a6ff', 'width': 2.5 },
+            },
+            {
+                selector: 'edge.edge-hover',
+                style: { 'text-opacity': 1, 'line-color': '#58a6ff', 'target-arrow-color': '#58a6ff', 'width': 2 },
             },
             {
                 selector: ':selected',
@@ -135,6 +240,10 @@ async function init() {
                 selector: '.dimmed',
                 style: { 'opacity': 0.2 },
             },
+            {
+                selector: '.labels-hidden',
+                style: { 'label': '' },
+            },
         ],
         layout: {
             name: 'cose',
@@ -147,6 +256,25 @@ async function init() {
             nestingFactor: 1.2,
             gravity: 0.3,
         },
+    });
+
+    // Update visible count after initial build
+    updateVisibleCount();
+
+    // Edge hover for labels
+    cy.on('mouseover', 'edge', (evt) => { evt.target.addClass('edge-hover'); });
+    cy.on('mouseout', 'edge', (evt) => { evt.target.removeClass('edge-hover'); });
+
+    // Zoom-based label hiding
+    cy.on('zoom', () => {
+        const zoom = cy.zoom();
+        cy.batch(() => {
+            if (zoom < ZOOM_LABEL_THRESHOLD) {
+                cy.nodes('[!isGroup]').addClass('labels-hidden');
+            } else {
+                cy.nodes('[!isGroup]').removeClass('labels-hidden');
+            }
+        });
     });
 
     // Node click -> show detail + impact
@@ -173,6 +301,7 @@ async function init() {
             const match = !q || n.data('label').toLowerCase().includes(q) || n.data('id').toLowerCase().includes(q);
             n.toggleClass('dimmed', !match);
         });
+        updateVisibleCount();
     });
 
     // Filters
@@ -180,10 +309,11 @@ async function init() {
         const type = document.getElementById('filter-type').value;
         const source = document.getElementById('filter-source').value;
         cy.nodes('[!isGroup]').forEach(n => {
-            const matchType = !type || n.data('type') === type;
+            const matchType = !type || n.data('assetType') === type;
             const matchSource = !source || n.data('source') === source;
             n.toggleClass('dimmed', !(matchType && matchSource));
         });
+        updateVisibleCount();
     };
     typeSelect.addEventListener('change', applyFilters);
     sourceSelect.addEventListener('change', applyFilters);
@@ -199,7 +329,10 @@ async function init() {
     // Close panel
     document.getElementById('close-panel').addEventListener('click', () => {
         document.getElementById('detail-panel').classList.add('hidden');
+        selectedNodeId = null;
         cy.nodes().removeClass('highlighted dimmed neighbor-highlight');
+        cy.edges().removeClass('dimmed');
+        updateVisibleCount();
     });
 
     // Legend toggle
@@ -211,6 +344,9 @@ async function init() {
     document.getElementById('btn-shortcuts').addEventListener('click', () => {
         document.getElementById('shortcuts-panel').classList.toggle('hidden');
     });
+
+    // Privacy toggle
+    document.getElementById('btn-privacy').addEventListener('click', togglePrivacyMode);
 
     // Export dropdown
     document.getElementById('btn-export').addEventListener('click', (e) => {
@@ -233,6 +369,38 @@ async function init() {
             hideContextMenu();
             handleContextAction(a.dataset.action, nodeId);
         });
+    });
+
+    // Focus mode: upstream depth buttons
+    document.querySelectorAll('#upstream-depth button').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (!selectedNodeId) return;
+            document.querySelectorAll('#upstream-depth button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            focusUpstream(selectedNodeId, parseInt(btn.dataset.depth));
+        });
+    });
+
+    // Focus mode: downstream depth buttons
+    document.querySelectorAll('#downstream-depth button').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (!selectedNodeId) return;
+            document.querySelectorAll('#downstream-depth button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            focusDownstream(selectedNodeId, parseInt(btn.dataset.depth));
+        });
+    });
+
+    // Focus mode: secrets touched
+    document.getElementById('btn-secrets-touched').addEventListener('click', () => {
+        if (!selectedNodeId) return;
+        focusSecretsTouched(selectedNodeId);
+    });
+
+    // Focus mode: external exposure
+    document.getElementById('btn-external-exposure').addEventListener('click', () => {
+        if (!selectedNodeId) return;
+        focusExternalExposure(selectedNodeId);
     });
 
     // Scan button
@@ -269,7 +437,7 @@ function buildElements(data, groupBy) {
 
     (data.nodes || []).forEach(n => {
         const nodeData = {
-            id: n.id, label: n.name, type: n.type, source: n.source,
+            id: n.id, label: n.name, assetType: n.type, type: n.type, source: n.source,
             provider: n.provider, expires_at: n.expires_at,
             namespace: (n.metadata && n.metadata.namespace) || '',
         };
@@ -303,10 +471,32 @@ function buildElements(data, groupBy) {
         });
     }
 
+    // Build edges with parallel edge detection
+    const edgePairCount = {};
+    const edgePairIndex = {};
     (data.edges || []).forEach(e => {
-        elements.push({
-            data: { id: e.id, source: e.from_id, target: e.to_id, label: e.type },
-        });
+        const pairKey = [e.from_id, e.to_id].sort().join('|');
+        edgePairCount[pairKey] = (edgePairCount[pairKey] || 0) + 1;
+    });
+
+    (data.edges || []).forEach(e => {
+        const pairKey = [e.from_id, e.to_id].sort().join('|');
+        const count = edgePairCount[pairKey];
+        const edgeData = {
+            id: e.id, source: e.from_id, target: e.to_id, label: e.type,
+            curveStyle: 'bezier',
+            cpDist: 0,
+        };
+
+        if (count > 1) {
+            if (!edgePairIndex[pairKey]) edgePairIndex[pairKey] = 0;
+            const idx = edgePairIndex[pairKey]++;
+            edgeData.curveStyle = 'unbundled-bezier';
+            const distances = [30, -30, 60, -60, 90, -90];
+            edgeData.cpDist = distances[idx % distances.length];
+        }
+
+        elements.push({ data: edgeData });
     });
 
     return elements;
@@ -333,6 +523,9 @@ function rebuildGraph(groupBy) {
         nestingFactor: 1.2,
         gravity: 0.3,
     }).run();
+
+    applyEdgeTypeFilter();
+    updateVisibleCount();
 }
 
 // --- Context Menu ---
@@ -375,6 +568,146 @@ function highlightNeighbors(nodeId) {
     neighborhood.removeClass('dimmed');
     center.addClass('highlighted');
     neighborhood.nodes().not(center).addClass('neighbor-highlight');
+    updateVisibleCount();
+}
+
+// --- Focus Mode ---
+
+async function focusUpstream(nodeId, depth) {
+    clearFocusMessage();
+    try {
+        const impact = await fetchJSON(`${API}/impact/${encodeURIComponent(nodeId)}`);
+        const matchIds = new Set([nodeId]);
+        if (impact.impact_tree) {
+            for (const [id, info] of Object.entries(impact.impact_tree)) {
+                if (info.depth <= depth) matchIds.add(id);
+            }
+        }
+        highlightNodeSet(matchIds);
+    } catch {
+        setFocusMessage('Could not load upstream data.');
+    }
+}
+
+async function focusDownstream(nodeId, depth) {
+    clearFocusMessage();
+    try {
+        const result = await fetchJSON(`${API}/graph/dependency-chain/${encodeURIComponent(nodeId)}?depth=${depth}`);
+        const matchIds = new Set([nodeId]);
+        (result.nodes || []).forEach(n => matchIds.add(n.id));
+        highlightNodeSet(matchIds);
+    } catch {
+        setFocusMessage('Could not load downstream data.');
+    }
+}
+
+function focusSecretsTouched(nodeId) {
+    clearFocusMessage();
+    const secretNodes = new Set();
+    const visited = new Set();
+    const queue = [nodeId];
+    visited.add(nodeId);
+
+    // BFS through all edges from the selected node, collect nodes connected via mounts_secret edges
+    while (queue.length > 0) {
+        const current = queue.shift();
+        (graphData.edges || []).forEach(e => {
+            let neighbor = null;
+            if (e.from_id === current) neighbor = e.to_id;
+            else if (e.to_id === current) neighbor = e.from_id;
+            if (neighbor && !visited.has(neighbor)) {
+                visited.add(neighbor);
+                queue.push(neighbor);
+                if (e.type === 'mounts_secret') {
+                    secretNodes.add(neighbor);
+                    secretNodes.add(current);
+                }
+            }
+        });
+    }
+
+    if (secretNodes.size === 0) {
+        setFocusMessage('No secrets touched.');
+        return;
+    }
+    secretNodes.add(nodeId);
+    highlightNodeSet(secretNodes);
+}
+
+function focusExternalExposure(nodeId) {
+    clearFocusMessage();
+    const externalTypes = new Set(['ingress', 'load_balancer']);
+
+    // Build adjacency for reverse BFS (upstream)
+    const parentMap = {};
+    (graphData.edges || []).forEach(e => {
+        if (!parentMap[e.to_id]) parentMap[e.to_id] = [];
+        parentMap[e.to_id].push(e.from_id);
+    });
+
+    // BFS upstream from nodeId
+    const visited = new Set();
+    const prev = {};
+    const queue = [nodeId];
+    visited.add(nodeId);
+    let exposedNode = null;
+
+    while (queue.length > 0 && !exposedNode) {
+        const current = queue.shift();
+        const nodeInfo = (graphData.nodes || []).find(n => n.id === current);
+        if (nodeInfo && externalTypes.has(nodeInfo.type) && current !== nodeId) {
+            exposedNode = current;
+            break;
+        }
+        (parentMap[current] || []).forEach(parent => {
+            if (!visited.has(parent)) {
+                visited.add(parent);
+                prev[parent] = current;
+                queue.push(parent);
+            }
+        });
+    }
+
+    if (!exposedNode) {
+        setFocusMessage('Not externally exposed.');
+        return;
+    }
+
+    // Reconstruct path
+    const pathNodes = new Set([nodeId]);
+    let cur = exposedNode;
+    while (cur && cur !== nodeId) {
+        pathNodes.add(cur);
+        cur = prev[cur];
+    }
+    pathNodes.add(exposedNode);
+    highlightNodeSet(pathNodes);
+    setFocusMessage(`Exposed via ${exposedNode}`);
+}
+
+function highlightNodeSet(ids) {
+    cy.nodes().removeClass('highlighted dimmed neighbor-highlight');
+    cy.edges().removeClass('dimmed');
+    cy.nodes('[!isGroup]').forEach(n => {
+        if (ids.has(n.data('id'))) {
+            n.addClass('highlighted');
+        } else {
+            n.addClass('dimmed');
+        }
+    });
+    cy.edges().forEach(e => {
+        if (!ids.has(e.data('source')) || !ids.has(e.data('target'))) {
+            e.addClass('dimmed');
+        }
+    });
+    updateVisibleCount();
+}
+
+function setFocusMessage(msg) {
+    document.getElementById('focus-message').textContent = msg;
+}
+function clearFocusMessage() {
+    document.getElementById('focus-message').textContent = '';
 }
 
 // --- Keyboard Shortcuts ---
@@ -391,9 +724,11 @@ function handleKeyboard(e) {
     switch (e.key) {
         case 'Escape':
             document.getElementById('detail-panel').classList.add('hidden');
+            selectedNodeId = null;
             cy.nodes().removeClass('highlighted dimmed neighbor-highlight');
             cy.edges().removeClass('dimmed');
             hideContextMenu();
+            updateVisibleCount();
             break;
         case '/':
             e.preventDefault();
@@ -408,17 +743,27 @@ function handleKeyboard(e) {
         case '?':
             document.getElementById('shortcuts-panel').classList.toggle('hidden');
             break;
+        case 'p':
+            togglePrivacyMode();
+            break;
     }
 }
 
 function resetView() {
-    cy.nodes().removeClass('dimmed highlighted neighbor-highlight');
-    cy.edges().removeClass('dimmed');
+    cy.nodes().removeClass('dimmed highlighted neighbor-highlight labels-hidden');
+    cy.edges().removeClass('dimmed edge-hover');
+    disabledEdgeTypes.clear();
+    buildEdgeFilterPills();
     document.getElementById('search').value = '';
     document.getElementById('filter-type').value = '';
     document.getElementById('filter-source').value = '';
     document.getElementById('detail-panel').classList.add('hidden');
+    selectedNodeId = null;
+    // Clear focus depth button states
+    document.querySelectorAll('.depth-buttons button').forEach(b => b.classList.remove('active'));
+    clearFocusMessage();
     cy.fit();
+    updateVisibleCount();
 }
 
 // --- Scan ---
@@ -476,16 +821,20 @@ async function checkScanRunning() {
 // --- Detail Panel ---
 
 async function showDetail(nodeId) {
+    selectedNodeId = nodeId;
     const panel = document.getElementById('detail-panel');
     panel.classList.remove('hidden');
 
     const nodeData = (graphData.nodes || []).find(n => n.id === nodeId);
     if (!nodeData) return;
 
-    document.getElementById('detail-name').textContent = `${nodeData.name} (${nodeData.type})`;
+    const isSensitive = privacyMode && SENSITIVE_TYPES.has(nodeData.type);
+    const displayName = isSensitive ? maskSensitive(nodeData.name) : nodeData.name;
+
+    document.getElementById('detail-name').textContent = `${displayName} (${nodeData.type})`;
 
     let html = '<table class="meta-table">';
-    html += `<tr><td>ID</td><td>${esc(nodeData.id)}</td></tr>`;
+    html += `<tr><td>ID</td><td>${maskDetailValue('id', nodeData.id)}</td></tr>`;
     html += `<tr><td>Type</td><td>${esc(nodeData.type)}</td></tr>`;
     html += `<tr><td>Source</td><td>${esc(nodeData.source)}</td></tr>`;
     html += `<tr><td>Provider</td><td>${esc(nodeData.provider || '-')}</td></tr>`;
@@ -497,11 +846,15 @@ async function showDetail(nodeId) {
     }
     if (nodeData.metadata) {
         for (const [k, v] of Object.entries(nodeData.metadata)) {
-            html += `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`;
+            html += `<tr><td>${esc(k)}</td><td>${isSensitive ? maskDetailValue(k, v) : esc(v)}</td></tr>`;
         }
     }
     html += '</table>';
     document.getElementById('detail-content').innerHTML = html;
+
+    // Reset focus controls
+    document.querySelectorAll('.depth-buttons button').forEach(b => b.classList.remove('active'));
+    clearFocusMessage();
 
     // Fetch impact
     try {
@@ -509,7 +862,8 @@ async function showDetail(nodeId) {
         let impactHtml = `<p>${parseInt(impact.affected_nodes) || 0} affected nodes</p>`;
         if (impact.impact_tree) {
             for (const [id, info] of Object.entries(impact.impact_tree)) {
-                impactHtml += `<div class="impact-node"><span class="edge-type">[${esc(info.edge_type)}]</span> ${esc(id)}</div>`;
+                const displayId = (privacyMode && isSensitive) ? maskSensitive(id) : esc(id);
+                impactHtml += `<div class="impact-node"><span class="edge-type">[${esc(info.edge_type)}]</span> ${displayId}</div>`;
             }
         }
         document.getElementById('impact-content').innerHTML = impactHtml;
@@ -525,6 +879,7 @@ async function showDetail(nodeId) {
                 n.addClass('dimmed');
             }
         });
+        updateVisibleCount();
     } catch {
         document.getElementById('impact-content').innerHTML = '<p>Could not load impact data.</p>';
     }

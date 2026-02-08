@@ -7,7 +7,8 @@ header {
 }
 header h1 { font-size: 20px; color: #58a6ff; }
 header .subtitle { color: #8b949e; font-size: 14px; }
-header .stats { margin-left: auto; font-size: 13px; color: #8b949e; }
+header .stats { margin-left: auto; font-size: 13px; color: #8b949e; display: flex; gap: 6px; align-items: center; }
+header .stats-sep { color: #30363d; }
 
 .toolbar {
     display: flex; gap: 8px; padding: 10px 20px; background: #161b22; border-bottom: 1px solid #30363d;
@@ -30,6 +31,11 @@ header .stats { margin-left: auto; font-size: 13px; color: #8b949e; }
 
 #btn-shortcuts { width: 32px; padding: 6px 0; text-align: center; font-weight: bold; }
 
+/* Privacy button */
+#btn-privacy { transition: background 0.15s, border-color 0.15s; }
+#btn-privacy.active { background: #b5706b; border-color: #b5706b; color: #fff; }
+#btn-privacy.active:hover { background: #c58380; }
+
 #scan-status { font-size: 12px; color: #8b949e; align-self: center; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -38,6 +44,22 @@ header .stats { margin-left: auto; font-size: 13px; color: #8b949e; }
     border: 2px solid #8b949e; border-top-color: transparent; border-radius: 50%;
     animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 6px;
 }
+
+/* Edge filter pills */
+.edge-filters {
+    display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 20px;
+    background: #0d1117; border-bottom: 1px solid #30363d;
+    min-height: 0;
+}
+.edge-filters:empty { display: none; }
+.edge-pill {
+    padding: 3px 10px; border-radius: 12px; font-size: 11px;
+    background: #1f6feb33; border: 1px solid #1f6feb; color: #58a6ff;
+    cursor: pointer; transition: all 0.15s;
+}
+.edge-pill:hover { background: #1f6feb55; }
+.edge-pill.inactive { background: transparent; border-color: #30363d; color: #484f58; }
+.edge-pill.inactive:hover { border-color: #484f58; color: #8b949e; }
 
 #legend {
     display: flex; flex-wrap: wrap; gap: 12px; padding: 8px 20px;
@@ -122,3 +144,35 @@ header .stats { margin-left: auto; font-size: 13px; color: #8b949e; }
 
 .impact-node { padding: 4px 0; font-size: 12px; color: #c9d1d9; }
 .impact-node .edge-type { color: #8b949e; font-style: italic; }
+
+/* Focus controls in detail panel */
+.focus-controls { margin-top: 12px; }
+.focus-controls h4 { margin-top: 0; }
+.focus-row {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 8px;
+}
+.focus-label { font-size: 12px; color: #8b949e; min-width: 76px; }
+.depth-buttons {
+    display: flex; gap: 4px;
+}
+.depth-buttons button {
+    width: 28px; height: 28px; padding: 0;
+    background: #21262d; border: 1px solid #30363d; border-radius: 4px;
+    color: #8b949e; cursor: pointer; font-size: 12px;
+    transition: all 0.15s;
+}
+.depth-buttons button:hover { background: #30363d; color: #c9d1d9; }
+.depth-buttons button.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+
+#btn-secrets-touched, #btn-external-exposure {
+    padding: 5px 10px; background: #21262d; border: 1px solid #30363d;
+    border-radius: 4px; color: #c9d1d9; cursor: pointer; font-size: 11px;
+    transition: all 0.15s;
+}
+#btn-secrets-touched:hover, #btn-external-exposure:hover { background: #30363d; }
+
+#focus-message {
+    font-size: 11px; color: #8b949e; padding: 4px 0;
+    min-height: 20px;
+}

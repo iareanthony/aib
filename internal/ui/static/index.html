@@ -11,7 +11,13 @@
     <header>
         <h1>AIB</h1>
         <span class="subtitle">Assets in a Box</span>
-        <div class="stats" id="stats"></div>
+        <div class="stats" id="stats">
+            <span><span id="stat-nodes-visible">–</span> / <span id="stat-nodes">–</span> nodes</span>
+            <span class="stats-sep">|</span>
+            <span><span id="stat-edges-visible">–</span> / <span id="stat-edges">–</span> edges</span>
+            <span class="stats-sep">|</span>
+            <span id="stat-certs">– expiring certs</span>
+        </div>
     </header>
 
     <div class="toolbar">
@@ -40,9 +46,12 @@
         <button id="btn-reset">Reset View</button>
         <button id="btn-scan">Scan Now</button>
         <span id="scan-status"></span>
+        <button id="btn-privacy" title="Privacy Mode">Privacy</button>
         <button id="btn-legend">Legend</button>
         <button id="btn-shortcuts" title="Keyboard Shortcuts (?)">?</button>
     </div>
+
+    <div id="edge-filters" class="edge-filters"></div>
 
     <div id="legend" class="hidden">
         <span class="legend-item"><svg width="14" height="14"><rect x="1" y="1" width="12" height="12" rx="1" fill="#6e9ecf" stroke="#30363d"/></svg> Compute</span>
@@ -63,6 +72,7 @@
             <span><kbd>Esc</kbd> Deselect / close panel</span>
             <span><kbd>r</kbd> Reset view</span>
             <span><kbd>l</kbd> Toggle legend</span>
+            <span><kbd>p</kbd> Toggle privacy</span>
             <span><kbd>?</kbd> Toggle shortcuts</span>
         </div>
     </div>
@@ -73,6 +83,26 @@
             <button id="close-panel">&times;</button>
             <h3 id="detail-name"></h3>
             <div id="detail-content"></div>
+            <div class="focus-controls" id="focus-controls">
+                <h4>Focus</h4>
+                <div class="focus-row">
+                    <span class="focus-label">Upstream</span>
+                    <div class="depth-buttons" id="upstream-depth">
+                        <button data-depth="1">1</button><button data-depth="2">2</button><button data-depth="3">3</button><button data-depth="4">4</button><button data-depth="5">5</button>
+                    </div>
+                </div>
+                <div class="focus-row">
+                    <span class="focus-label">Downstream</span>
+                    <div class="depth-buttons" id="downstream-depth">
+                        <button data-depth="1">1</button><button data-depth="2">2</button><button data-depth="3">3</button><button data-depth="4">4</button><button data-depth="5">5</button>
+                    </div>
+                </div>
+                <div class="focus-row">
+                    <button id="btn-secrets-touched">Secrets Touched</button>
+                    <button id="btn-external-exposure">External Exposure</button>
+                </div>
+                <div id="focus-message"></div>
+            </div>
             <h4>Blast Radius</h4>
             <div id="impact-content"></div>
         </div>
