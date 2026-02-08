@@ -2,6 +2,15 @@
 
 All notable changes to AIB are documented here. See [GitHub Releases](https://github.com/matijazezelj/aib/releases) for download links.
 
+## [0.3.2] - 2026-02-08
+
+### Fixed
+- **K8s parser**: auto-create missing secret/configmap nodes when referenced by workloads (Deployment, StatefulSet, DaemonSet, ReplicaSet) — fixes FK constraint violations at store time
+  - Covers all 6 reference mechanisms: volume secret, volume configmap, envFrom secretRef/configMapRef, env secretKeyRef/configMapKeyRef
+
+### Added
+- Web UI screenshot in README (`assets/aib.png`)
+
 ## [0.3.1] - 2026-02-08
 
 ### Added
