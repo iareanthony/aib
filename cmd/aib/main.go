@@ -23,54 +23,62 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	version   = "dev"
-	cfgFile   string
-	dbPath    string
-	logFormat string
-	logLevel  string
-	logger    *slog.Logger
-)
+var version = "dev"
+
+type cliApp struct {
+	cfgFile, dbPath, logFormat, logLevel string
+	logger                               *slog.Logger
+	version                              string
+	out                                  io.Writer // os.Stdout in prod, bytes.Buffer in tests
+	errOut                               io.Writer // os.Stderr in prod
+	in                                   io.Reader // os.Stdin in prod (for prune/backup confirmation)
+}
 
 func main() {
-	logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	app := &cliApp{
+		version: version,
+		out:     os.Stdout,
+		errOut:  os.Stderr,
+		in:      os.Stdin,
+		logger:  slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})),
+	}
 
 	root := &cobra.Command{
 		Use:   "aib",
 		Short: "AIB — Assets in a Box",
 		Long:  "Infrastructure asset discovery, dependency mapping, and blast radius analysis.",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			level, err := parseLogLevel(logLevel)
+			level, err := parseLogLevel(app.logLevel)
 			if err != nil {
 				return err
 			}
 			opts := &slog.HandlerOptions{Level: level}
-			switch logFormat {
+			switch app.logFormat {
 			case "json":
-				logger = slog.New(slog.NewJSONHandler(os.Stderr, opts))
+				app.logger = slog.New(slog.NewJSONHandler(app.errOut, opts))
 			case "text":
-				logger = slog.New(slog.NewTextHandler(os.Stderr, opts))
+				app.logger = slog.New(slog.NewTextHandler(app.errOut, opts))
 			default:
-				return fmt.Errorf("invalid --log-format %q (use: text, json)", logFormat)
+				return fmt.Errorf("invalid --log-format %q (use: text, json)", app.logFormat)
 			}
 			return nil
 		},
 	}
 
-	root.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: ./aib.yaml)")
-	root.PersistentFlags().StringVar(&dbPath, "db", "", "database path (overrides config)")
-	root.PersistentFlags().StringVar(&logFormat, "log-format", "text", "log output format (text, json)")
-	root.PersistentFlags().StringVar(&logLevel, "log-level", "info", "log level (debug, info, warn, error)")
+	root.PersistentFlags().StringVar(&app.cfgFile, "config", "", "config file (default: ./aib.yaml)")
+	root.PersistentFlags().StringVar(&app.dbPath, "db", "", "database path (overrides config)")
+	root.PersistentFlags().StringVar(&app.logFormat, "log-format", "text", "log output format (text, json)")
+	root.PersistentFlags().StringVar(&app.logLevel, "log-level", "info", "log level (debug, info, warn, error)")
 
 	root.AddCommand(
-		scanCmd(),
-		graphCmd(),
-		impactCmd(),
-		certsCmd(),
-		dbCmd(),
-		serveCmd(),
-		versionCmd(),
-		completionCmd(),
+		app.scanCmd(),
+		app.graphCmd(),
+		app.impactCmd(),
+		app.certsCmd(),
+		app.dbCmd(),
+		app.serveCmd(),
+		app.versionCmd(),
+		app.completionCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -78,37 +86,38 @@ func main() {
 	}
 }
 
-func openStore() (*graph.SQLiteStore, *config.Config) {
-	cfg, err := config.Load(cfgFile)
+func (a *cliApp) openStore() (*graph.SQLiteStore, *config.Config, error) {
+	cfg, err := config.Load(a.cfgFile)
 	if err != nil {
-		logger.Error("loading config", "error", err)
-		os.Exit(1)
+		return nil, nil, fmt.Errorf("loading config: %w", err)
 	}
 
 	path := cfg.Storage.Path
-	if dbPath != "" {
-		path = dbPath
+	if a.dbPath != "" {
+		path = a.dbPath
 	}
 
 	store, err := graph.NewSQLiteStore(path)
 	if err != nil {
-		logger.Error("opening database", "error", err)
-		os.Exit(1)
+		return nil, nil, fmt.Errorf("opening database: %w", err)
 	}
 
 	if err := store.Init(context.Background()); err != nil {
-		logger.Error("initializing database", "error", err)
-		os.Exit(1)
+		_ = store.Close()
+		return nil, nil, fmt.Errorf("initializing database: %w", err)
 	}
 
-	return store, cfg
+	return store, cfg, nil
 }
 
 // openStoreAndEngine returns the SQLite store and a GraphEngine.
 // If Memgraph is configured and reachable, it returns a MemgraphEngine;
 // otherwise it falls back to LocalEngine (in-memory BFS).
-func openStoreAndEngine() (*graph.SQLiteStore, graph.GraphEngine, *config.Config) {
-	store, cfg := openStore()
+func (a *cliApp) openStoreAndEngine() (*graph.SQLiteStore, graph.GraphEngine, *config.Config, error) {
+	store, cfg, err := a.openStore()
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	localEngine := graph.NewLocalEngine(store)
 	var engine graph.GraphEngine = localEngine
 
@@ -118,38 +127,38 @@ func openStoreAndEngine() (*graph.SQLiteStore, graph.GraphEngine, *config.Config
 			cfg.Storage.Memgraph.Username,
 			cfg.Storage.Memgraph.Password,
 			localEngine,
-			logger,
+			a.logger,
 		)
 		if err != nil {
-			logger.Warn("memgraph unavailable, using local graph engine", "error", err)
+			a.logger.Warn("memgraph unavailable, using local graph engine", "error", err)
 		} else {
 			engine = mgEngine
-			logger.Info("memgraph connected", "uri", cfg.Storage.Memgraph.URI)
+			a.logger.Info("memgraph connected", "uri", cfg.Storage.Memgraph.URI)
 		}
 	}
 
-	return store, engine, cfg
+	return store, engine, cfg, nil
 }
 
 // --- scan ---
 
-func scanCmd() *cobra.Command {
+func (a *cliApp) scanCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "scan",
 		Short: "Discover assets from infrastructure sources",
 	}
 
-	cmd.AddCommand(scanTerraformCmd())
-	cmd.AddCommand(scanTerraformPlanCmd())
-	cmd.AddCommand(scanAnsibleCmd())
-	cmd.AddCommand(scanK8sCmd())
-	cmd.AddCommand(scanComposeCmd())
-	cmd.AddCommand(scanCloudFormationCmd())
-	cmd.AddCommand(scanPulumiCmd())
+	cmd.AddCommand(a.scanTerraformCmd())
+	cmd.AddCommand(a.scanTerraformPlanCmd())
+	cmd.AddCommand(a.scanAnsibleCmd())
+	cmd.AddCommand(a.scanK8sCmd())
+	cmd.AddCommand(a.scanComposeCmd())
+	cmd.AddCommand(a.scanCloudFormationCmd())
+	cmd.AddCommand(a.scanPulumiCmd())
 	return cmd
 }
 
-func scanTerraformCmd() *cobra.Command {
+func (a *cliApp) scanTerraformCmd() *cobra.Command {
 	var remote bool
 	var workspace string
 
@@ -158,18 +167,21 @@ func scanTerraformCmd() *cobra.Command {
 		Short: "Scan Terraform state files, directories, or remote backends",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, cfg := openStore()
+			store, cfg, err := a.openStore()
+			if err != nil {
+				return err
+			}
 			defer store.Close() //nolint:errcheck // best-effort cleanup
 
-			fmt.Printf("Scanning Terraform state across %d path(s)...\n", len(args))
-			sc := scanner.New(store, cfg, logger)
+			_, _ = fmt.Fprintf(a.out, "Scanning Terraform state across %d path(s)...\n", len(args))
+			sc := scanner.New(store, cfg, a.logger)
 			r := sc.RunSync(cmd.Context(), scanner.ScanRequest{
 				Source:    "terraform",
 				Paths:     args,
 				Remote:    remote,
 				Workspace: workspace,
 			})
-			printScanResult(r)
+			a.printScanResult(r)
 			if r.Error != nil {
 				return r.Error
 			}
@@ -182,38 +194,41 @@ func scanTerraformCmd() *cobra.Command {
 	return cmd
 }
 
-func scanTerraformPlanCmd() *cobra.Command {
+func (a *cliApp) scanTerraformPlanCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "terraform-plan <plan.json> [plan.json...]",
 		Short: "Scan Terraform plan JSON output for pre-deploy impact analysis",
 		Long:  "Parses output of 'terraform show -json <planfile>' to discover planned resource changes.",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, cfg := openStore()
+			store, cfg, err := a.openStore()
+			if err != nil {
+				return err
+			}
 			defer store.Close() //nolint:errcheck // best-effort cleanup
 
-			fmt.Printf("Scanning Terraform plan across %d file(s)...\n", len(args))
-			sc := scanner.New(store, cfg, logger)
+			_, _ = fmt.Fprintf(a.out, "Scanning Terraform plan across %d file(s)...\n", len(args))
+			sc := scanner.New(store, cfg, a.logger)
 			r := sc.RunSync(cmd.Context(), scanner.ScanRequest{
 				Source: "terraform-plan",
 				Paths:  args,
 			})
 			if r.Error != nil {
-				fmt.Printf("Scan failed: %v\n", r.Error)
+				_, _ = fmt.Fprintf(a.out, "Scan failed: %v\n", r.Error)
 				return r.Error
 			}
 
 			// Print summary with action breakdown.
-			fmt.Printf("Discovered %d nodes, %d edges\n", r.NodesFound, r.EdgesFound)
+			_, _ = fmt.Fprintf(a.out, "Discovered %d nodes, %d edges\n", r.NodesFound, r.EdgesFound)
 			for _, w := range r.Warnings {
-				fmt.Printf("  warning: %s\n", w)
+				_, _ = fmt.Fprintf(a.out, "  warning: %s\n", w)
 			}
 			return nil
 		},
 	}
 }
 
-func scanAnsibleCmd() *cobra.Command {
+func (a *cliApp) scanAnsibleCmd() *cobra.Command {
 	var playbooks string
 
 	cmd := &cobra.Command{
@@ -221,17 +236,20 @@ func scanAnsibleCmd() *cobra.Command {
 		Short: "Scan Ansible inventory and playbooks for infrastructure assets",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, cfg := openStore()
+			store, cfg, err := a.openStore()
+			if err != nil {
+				return err
+			}
 			defer store.Close() //nolint:errcheck // best-effort cleanup
 
-			fmt.Printf("Scanning Ansible inventory across %d path(s)...\n", len(args))
-			sc := scanner.New(store, cfg, logger)
+			_, _ = fmt.Fprintf(a.out, "Scanning Ansible inventory across %d path(s)...\n", len(args))
+			sc := scanner.New(store, cfg, a.logger)
 			r := sc.RunSync(cmd.Context(), scanner.ScanRequest{
 				Source:    "ansible",
 				Paths:     args,
 				Playbooks: playbooks,
 			})
-			printScanResult(r)
+			a.printScanResult(r)
 			if r.Error != nil {
 				return r.Error
 			}
@@ -243,7 +261,7 @@ func scanAnsibleCmd() *cobra.Command {
 	return cmd
 }
 
-func scanK8sCmd() *cobra.Command {
+func (a *cliApp) scanK8sCmd() *cobra.Command {
 	var valuesFile string
 	var helm bool
 	var live bool
@@ -252,25 +270,28 @@ func scanK8sCmd() *cobra.Command {
 	var namespaces []string
 
 	cmd := &cobra.Command{
-		Use:   "kubernetes <path> [path...]",
-		Short: "Scan Kubernetes manifests, Helm charts, or live clusters",
+		Use:     "kubernetes <path> [path...]",
+		Short:   "Scan Kubernetes manifests, Helm charts, or live clusters",
 		Aliases: []string{"k8s"},
-		Args:  cobra.MinimumNArgs(0),
+		Args:    cobra.MinimumNArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, cfg := openStore()
+			store, cfg, err := a.openStore()
+			if err != nil {
+				return err
+			}
 			defer store.Close() //nolint:errcheck // best-effort cleanup
 
-			sc := scanner.New(store, cfg, logger)
+			sc := scanner.New(store, cfg, a.logger)
 
 			if live {
-				fmt.Println("Scanning live Kubernetes cluster...")
+				_, _ = fmt.Fprintln(a.out, "Scanning live Kubernetes cluster...")
 				r := sc.RunSync(cmd.Context(), scanner.ScanRequest{
 					Source:     "kubernetes-live",
 					Kubeconfig: kubeconfig,
 					Context:    kubeCtx,
 					Namespaces: namespaces,
 				})
-				printScanResult(r)
+				a.printScanResult(r)
 				if r.Error != nil {
 					return r.Error
 				}
@@ -281,14 +302,14 @@ func scanK8sCmd() *cobra.Command {
 				return fmt.Errorf("at least one path is required (or use --live for cluster scanning)")
 			}
 
-			fmt.Printf("Scanning Kubernetes manifests across %d path(s)...\n", len(args))
+			_, _ = fmt.Fprintf(a.out, "Scanning Kubernetes manifests across %d path(s)...\n", len(args))
 			r := sc.RunSync(cmd.Context(), scanner.ScanRequest{
 				Source:     "kubernetes",
 				Paths:      args,
 				Helm:       helm,
 				ValuesFile: valuesFile,
 			})
-			printScanResult(r)
+			a.printScanResult(r)
 			if r.Error != nil {
 				return r.Error
 			}
@@ -305,22 +326,25 @@ func scanK8sCmd() *cobra.Command {
 	return cmd
 }
 
-func scanComposeCmd() *cobra.Command {
+func (a *cliApp) scanComposeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "compose <path> [path...]",
 		Short: "Scan Docker Compose files for service dependencies",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, cfg := openStore()
+			store, cfg, err := a.openStore()
+			if err != nil {
+				return err
+			}
 			defer store.Close() //nolint:errcheck // best-effort cleanup
 
-			fmt.Printf("Scanning Docker Compose across %d path(s)...\n", len(args))
-			sc := scanner.New(store, cfg, logger)
+			_, _ = fmt.Fprintf(a.out, "Scanning Docker Compose across %d path(s)...\n", len(args))
+			sc := scanner.New(store, cfg, a.logger)
 			r := sc.RunSync(cmd.Context(), scanner.ScanRequest{
 				Source: "compose",
 				Paths:  args,
 			})
-			printScanResult(r)
+			a.printScanResult(r)
 			if r.Error != nil {
 				return r.Error
 			}
@@ -329,22 +353,25 @@ func scanComposeCmd() *cobra.Command {
 	}
 }
 
-func scanCloudFormationCmd() *cobra.Command {
+func (a *cliApp) scanCloudFormationCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "cloudformation <path> [path...]",
 		Short: "Scan AWS CloudFormation templates for resource dependencies",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, cfg := openStore()
+			store, cfg, err := a.openStore()
+			if err != nil {
+				return err
+			}
 			defer store.Close() //nolint:errcheck // best-effort cleanup
 
-			fmt.Printf("Scanning CloudFormation templates across %d path(s)...\n", len(args))
-			sc := scanner.New(store, cfg, logger)
+			_, _ = fmt.Fprintf(a.out, "Scanning CloudFormation templates across %d path(s)...\n", len(args))
+			sc := scanner.New(store, cfg, a.logger)
 			r := sc.RunSync(cmd.Context(), scanner.ScanRequest{
 				Source: "cloudformation",
 				Paths:  args,
 			})
-			printScanResult(r)
+			a.printScanResult(r)
 			if r.Error != nil {
 				return r.Error
 			}
@@ -353,23 +380,26 @@ func scanCloudFormationCmd() *cobra.Command {
 	}
 }
 
-func scanPulumiCmd() *cobra.Command {
+func (a *cliApp) scanPulumiCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "pulumi <path> [path...]",
 		Short: "Scan Pulumi stack export files for resource dependencies",
 		Long:  "Parses output of 'pulumi stack export' to discover infrastructure resources and their relationships.",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, cfg := openStore()
+			store, cfg, err := a.openStore()
+			if err != nil {
+				return err
+			}
 			defer store.Close() //nolint:errcheck // best-effort cleanup
 
-			fmt.Printf("Scanning Pulumi state across %d path(s)...\n", len(args))
-			sc := scanner.New(store, cfg, logger)
+			_, _ = fmt.Fprintf(a.out, "Scanning Pulumi state across %d path(s)...\n", len(args))
+			sc := scanner.New(store, cfg, a.logger)
 			r := sc.RunSync(cmd.Context(), scanner.ScanRequest{
 				Source: "pulumi",
 				Paths:  args,
 			})
-			printScanResult(r)
+			a.printScanResult(r)
 			if r.Error != nil {
 				return r.Error
 			}
@@ -378,23 +408,23 @@ func scanPulumiCmd() *cobra.Command {
 	}
 }
 
-func printScanResult(r scanner.ScanResult) {
+func (a *cliApp) printScanResult(r scanner.ScanResult) {
 	if r.Error != nil {
-		fmt.Printf("Scan failed: %v\n", r.Error)
+		_, _ = fmt.Fprintf(a.out, "Scan failed: %v\n", r.Error)
 		return
 	}
-	fmt.Printf("Discovered %d nodes, %d edges\n", r.NodesFound, r.EdgesFound)
+	_, _ = fmt.Fprintf(a.out, "Discovered %d nodes, %d edges\n", r.NodesFound, r.EdgesFound)
 	for _, w := range r.Warnings {
-		fmt.Printf("  warning: %s\n", w)
+		_, _ = fmt.Fprintf(a.out, "  warning: %s\n", w)
 	}
 
 	if r.Drift != nil {
 		if r.Drift.IsInitial {
-			fmt.Println("Drift: (initial scan — all assets are new)")
+			_, _ = fmt.Fprintln(a.out, "Drift: (initial scan — all assets are new)")
 		} else if !r.Drift.HasChanges() {
-			fmt.Println("No drift detected")
+			_, _ = fmt.Fprintln(a.out, "No drift detected")
 		} else {
-			fmt.Printf("Drift: %d added, %d removed, %d modified nodes; %d added, %d removed edges\n",
+			_, _ = fmt.Fprintf(a.out, "Drift: %d added, %d removed, %d modified nodes; %d added, %d removed edges\n",
 				len(r.Drift.NodesAdded), len(r.Drift.NodesRemoved), len(r.Drift.NodesModified),
 				len(r.Drift.EdgesAdded), len(r.Drift.EdgesRemoved))
 		}
@@ -403,21 +433,24 @@ func printScanResult(r scanner.ScanResult) {
 
 // --- graph ---
 
-func graphCmd() *cobra.Command {
+func (a *cliApp) graphCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "graph",
 		Short: "Query the asset graph",
 	}
-	cmd.AddCommand(graphShowCmd(), graphNodesCmd(), graphEdgesCmd(), graphNeighborsCmd(), graphPathCmd(), graphDepsCmd(), graphPruneCmd(), graphExportCmd(), graphSyncCmd(), graphCyclesCmd(), graphSPOFCmd(), graphOrphansCmd())
+	cmd.AddCommand(a.graphShowCmd(), a.graphNodesCmd(), a.graphEdgesCmd(), a.graphNeighborsCmd(), a.graphPathCmd(), a.graphDepsCmd(), a.graphPruneCmd(), a.graphExportCmd(), a.graphSyncCmd(), a.graphCyclesCmd(), a.graphSPOFCmd(), a.graphOrphansCmd())
 	return cmd
 }
 
-func graphShowCmd() *cobra.Command {
+func (a *cliApp) graphShowCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show",
 		Short: "Print graph summary",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, _ := openStore()
+			store, _, err := a.openStore()
+			if err != nil {
+				return err
+			}
 			defer store.Close() //nolint:errcheck // best-effort cleanup
 			ctx := cmd.Context()
 
@@ -426,18 +459,18 @@ func graphShowCmd() *cobra.Command {
 			nodesByType, _ := store.NodeCountByType(ctx)
 			edgesByType, _ := store.EdgeCountByType(ctx)
 
-			fmt.Printf("Graph Summary\n")
-			fmt.Printf("  Total nodes: %d\n", nodeCount)
-			fmt.Printf("  Total edges: %d\n\n", edgeCount)
+			_, _ = fmt.Fprintf(a.out, "Graph Summary\n")
+			_, _ = fmt.Fprintf(a.out, "  Total nodes: %d\n", nodeCount)
+			_, _ = fmt.Fprintf(a.out, "  Total edges: %d\n\n", edgeCount)
 
-			fmt.Printf("Nodes by type:\n")
+			_, _ = fmt.Fprintf(a.out, "Nodes by type:\n")
 			for t, c := range nodesByType {
-				fmt.Printf("  %-20s %d\n", t, c)
+				_, _ = fmt.Fprintf(a.out, "  %-20s %d\n", t, c)
 			}
 
-			fmt.Printf("\nEdges by type:\n")
+			_, _ = fmt.Fprintf(a.out, "\nEdges by type:\n")
 			for t, c := range edgesByType {
-				fmt.Printf("  %-20s %d\n", t, c)
+				_, _ = fmt.Fprintf(a.out, "  %-20s %d\n", t, c)
 			}
 
 			return nil
@@ -445,14 +478,17 @@ func graphShowCmd() *cobra.Command {
 	}
 }
 
-func graphNodesCmd() *cobra.Command {
+func (a *cliApp) graphNodesCmd() *cobra.Command {
 	var nodeType, source, provider string
 
 	cmd := &cobra.Command{
 		Use:   "nodes",
 		Short: "List all nodes",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, _ := openStore()
+			store, _, err := a.openStore()
+			if err != nil {
+				return err
+			}
 			defer store.Close() //nolint:errcheck // best-effort cleanup
 			ctx := cmd.Context()
 
@@ -463,7 +499,7 @@ func graphNodesCmd() *cobra.Command {
 				return err
 			}
 
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			w := tabwriter.NewWriter(a.out, 0, 0, 2, ' ', 0)
 			_, _ = fmt.Fprintln(w, "ID\tNAME\tTYPE\tSOURCE\tPROVIDER")
 			for _, n := range nodes {
 				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", n.ID, n.Name, n.Type, n.Source, n.Provider)
@@ -478,14 +514,17 @@ func graphNodesCmd() *cobra.Command {
 	return cmd
 }
 
-func graphEdgesCmd() *cobra.Command {
+func (a *cliApp) graphEdgesCmd() *cobra.Command {
 	var edgeType, from, to string
 
 	cmd := &cobra.Command{
 		Use:   "edges",
 		Short: "List all edges",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, _ := openStore()
+			store, _, err := a.openStore()
+			if err != nil {
+				return err
+			}
 			defer store.Close() //nolint:errcheck // best-effort cleanup
 			ctx := cmd.Context()
 
@@ -496,7 +535,7 @@ func graphEdgesCmd() *cobra.Command {
 				return err
 			}
 
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			w := tabwriter.NewWriter(a.out, 0, 0, 2, ' ', 0)
 			_, _ = fmt.Fprintln(w, "FROM\tTYPE\tTO")
 			for _, e := range edges {
 				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", e.FromID, e.Type, e.ToID)
@@ -511,13 +550,16 @@ func graphEdgesCmd() *cobra.Command {
 	return cmd
 }
 
-func graphNeighborsCmd() *cobra.Command {
+func (a *cliApp) graphNeighborsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "neighbors <node-id>",
 		Short: "Show direct neighbors of a node",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, _ := openStore()
+			store, _, err := a.openStore()
+			if err != nil {
+				return err
+			}
 			defer store.Close() //nolint:errcheck // best-effort cleanup
 			ctx := cmd.Context()
 
@@ -530,14 +572,14 @@ func graphNeighborsCmd() *cobra.Command {
 				return fmt.Errorf("node %q not found", nodeID)
 			}
 
-			fmt.Printf("Neighbors of %s (%s, %s)\n\n", node.Name, node.Type, node.Source)
+			_, _ = fmt.Fprintf(a.out, "Neighbors of %s (%s, %s)\n\n", node.Name, node.Type, node.Source)
 
 			neighbors, err := store.GetNeighbors(ctx, nodeID)
 			if err != nil {
 				return err
 			}
 
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			w := tabwriter.NewWriter(a.out, 0, 0, 2, ' ', 0)
 			_, _ = fmt.Fprintln(w, "ID\tNAME\tTYPE\tSOURCE")
 			for _, n := range neighbors {
 				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", n.ID, n.Name, n.Type, n.Source)
@@ -547,13 +589,16 @@ func graphNeighborsCmd() *cobra.Command {
 	}
 }
 
-func graphPathCmd() *cobra.Command {
+func (a *cliApp) graphPathCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "path <from-id> <to-id>",
 		Short: "Find shortest path between two nodes",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, engine, _ := openStoreAndEngine()
+			store, engine, _, err := a.openStoreAndEngine()
+			if err != nil {
+				return err
+			}
 			defer store.Close()  //nolint:errcheck // best-effort cleanup
 			defer engine.Close() //nolint:errcheck // best-effort cleanup
 			ctx := cmd.Context()
@@ -581,9 +626,9 @@ func graphPathCmd() *cobra.Command {
 				return err
 			}
 
-			_, _ = fmt.Fprintf(os.Stdout, "Shortest path: %s → %s (%d steps)\n\n", fromID, toID, len(nodes)-1)
+			_, _ = fmt.Fprintf(a.out, "Shortest path: %s → %s (%d steps)\n\n", fromID, toID, len(nodes)-1)
 
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			w := tabwriter.NewWriter(a.out, 0, 0, 2, ' ', 0)
 			_, _ = fmt.Fprintln(w, "STEP\tNODE ID\tNAME\tTYPE")
 			for i, n := range nodes {
 				_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\n", i, n.ID, n.Name, n.Type)
@@ -593,7 +638,7 @@ func graphPathCmd() *cobra.Command {
 	}
 }
 
-func graphDepsCmd() *cobra.Command {
+func (a *cliApp) graphDepsCmd() *cobra.Command {
 	var depth int
 
 	cmd := &cobra.Command{
@@ -601,7 +646,10 @@ func graphDepsCmd() *cobra.Command {
 		Short: "Show downstream dependencies of a node",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, engine, _ := openStoreAndEngine()
+			store, engine, _, err := a.openStoreAndEngine()
+			if err != nil {
+				return err
+			}
 			defer store.Close()  //nolint:errcheck // best-effort cleanup
 			defer engine.Close() //nolint:errcheck // best-effort cleanup
 			ctx := cmd.Context()
@@ -620,14 +668,14 @@ func graphDepsCmd() *cobra.Command {
 				return err
 			}
 
-			_, _ = fmt.Fprintf(os.Stdout, "Dependencies of %s (%s, %s) — depth %d\n\n", node.Name, node.Type, node.Source, depth)
+			_, _ = fmt.Fprintf(a.out, "Dependencies of %s (%s, %s) — depth %d\n\n", node.Name, node.Type, node.Source, depth)
 
 			if len(deps) == 0 {
-				_, _ = fmt.Fprintln(os.Stdout, "No dependencies found.")
+				_, _ = fmt.Fprintln(a.out, "No dependencies found.")
 				return nil
 			}
 
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			w := tabwriter.NewWriter(a.out, 0, 0, 2, ' ', 0)
 			_, _ = fmt.Fprintln(w, "ID\tNAME\tTYPE\tSOURCE")
 			for _, n := range deps {
 				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", n.ID, n.Name, n.Type, n.Source)
@@ -640,7 +688,7 @@ func graphDepsCmd() *cobra.Command {
 	return cmd
 }
 
-func graphPruneCmd() *cobra.Command {
+func (a *cliApp) graphPruneCmd() *cobra.Command {
 	var staleDays int
 	var source string
 	var force bool
@@ -653,7 +701,10 @@ func graphPruneCmd() *cobra.Command {
 				return fmt.Errorf("specify at least one filter: --stale-days or --source")
 			}
 
-			store, _ := openStore()
+			store, _, err := a.openStore()
+			if err != nil {
+				return err
+			}
 			defer store.Close() //nolint:errcheck // best-effort cleanup
 			ctx := cmd.Context()
 
@@ -666,29 +717,29 @@ func graphPruneCmd() *cobra.Command {
 			}
 
 			if len(nodes) == 0 {
-				_, _ = fmt.Fprintln(os.Stdout, "No matching nodes found.")
+				_, _ = fmt.Fprintln(a.out, "No matching nodes found.")
 				return nil
 			}
 
-			_, _ = fmt.Fprintf(os.Stdout, "Found %d nodes to prune:\n\n", len(nodes))
+			_, _ = fmt.Fprintf(a.out, "Found %d nodes to prune:\n\n", len(nodes))
 			limit := 10
 			if len(nodes) < limit {
 				limit = len(nodes)
 			}
 			for _, n := range nodes[:limit] {
-				_, _ = fmt.Fprintf(os.Stdout, "  %s (%s, last seen: %s)\n", n.ID, n.Type, n.LastSeen.Format("2006-01-02"))
+				_, _ = fmt.Fprintf(a.out, "  %s (%s, last seen: %s)\n", n.ID, n.Type, n.LastSeen.Format("2006-01-02"))
 			}
 			if len(nodes) > 10 {
-				_, _ = fmt.Fprintf(os.Stdout, "  ... and %d more\n", len(nodes)-10)
+				_, _ = fmt.Fprintf(a.out, "  ... and %d more\n", len(nodes)-10)
 			}
 
 			if !force {
-				_, _ = fmt.Fprintf(os.Stdout, "\nDelete %d nodes? [y/N]: ", len(nodes))
-				reader := bufio.NewReader(os.Stdin)
+				_, _ = fmt.Fprintf(a.out, "\nDelete %d nodes? [y/N]: ", len(nodes))
+				reader := bufio.NewReader(a.in)
 				answer, _ := reader.ReadString('\n')
 				answer = strings.TrimSpace(strings.ToLower(answer))
 				if answer != "y" && answer != "yes" {
-					_, _ = fmt.Fprintln(os.Stdout, "Aborted.")
+					_, _ = fmt.Fprintln(a.out, "Aborted.")
 					return nil
 				}
 			}
@@ -696,13 +747,13 @@ func graphPruneCmd() *cobra.Command {
 			deleted := 0
 			for _, n := range nodes {
 				if err := store.DeleteNode(ctx, n.ID); err != nil {
-					_, _ = fmt.Fprintf(os.Stderr, "error deleting %s: %v\n", n.ID, err)
+					_, _ = fmt.Fprintf(a.errOut, "error deleting %s: %v\n", n.ID, err)
 					continue
 				}
 				deleted++
 			}
 
-			_, _ = fmt.Fprintf(os.Stdout, "Deleted %d nodes (and their edges).\n", deleted)
+			_, _ = fmt.Fprintf(a.out, "Deleted %d nodes (and their edges).\n", deleted)
 			return nil
 		},
 	}
@@ -713,19 +764,21 @@ func graphPruneCmd() *cobra.Command {
 	return cmd
 }
 
-func graphExportCmd() *cobra.Command {
+func (a *cliApp) graphExportCmd() *cobra.Command {
 	var format string
 
 	cmd := &cobra.Command{
 		Use:   "export",
 		Short: "Export graph in various formats",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, _ := openStore()
+			store, _, err := a.openStore()
+			if err != nil {
+				return err
+			}
 			defer store.Close() //nolint:errcheck // best-effort cleanup
 			ctx := cmd.Context()
 
 			var output string
-			var err error
 
 			switch format {
 			case "json":
@@ -742,7 +795,7 @@ func graphExportCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Print(output)
+			_, _ = fmt.Fprint(a.out, output)
 			return nil
 		},
 	}
@@ -751,12 +804,15 @@ func graphExportCmd() *cobra.Command {
 	return cmd
 }
 
-func graphSyncCmd() *cobra.Command {
+func (a *cliApp) graphSyncCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "sync",
 		Short: "Synchronize graph data from SQLite to Memgraph",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, cfg := openStore()
+			store, cfg, err := a.openStore()
+			if err != nil {
+				return err
+			}
 			defer store.Close() //nolint:errcheck // best-effort cleanup
 
 			if !cfg.Storage.Memgraph.Enabled {
@@ -774,17 +830,20 @@ func graphSyncCmd() *cobra.Command {
 			}
 			defer driver.Close(context.Background()) //nolint:errcheck // best-effort cleanup
 
-			return graph.SyncToMemgraph(cmd.Context(), store, driver, logger)
+			return graph.SyncToMemgraph(cmd.Context(), store, driver, a.logger)
 		},
 	}
 }
 
-func graphCyclesCmd() *cobra.Command {
+func (a *cliApp) graphCyclesCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "cycles",
 		Short: "Detect circular dependencies in the graph",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, engine, _ := openStoreAndEngine()
+			store, engine, _, err := a.openStoreAndEngine()
+			if err != nil {
+				return err
+			}
 			defer store.Close()  //nolint:errcheck // best-effort cleanup
 			defer engine.Close() //nolint:errcheck // best-effort cleanup
 
@@ -794,21 +853,21 @@ func graphCyclesCmd() *cobra.Command {
 			}
 
 			if len(cycles) == 0 {
-				fmt.Println("No circular dependencies found.")
+				_, _ = fmt.Fprintln(a.out, "No circular dependencies found.")
 				return nil
 			}
 
-			fmt.Printf("Found %d circular dependency chain(s):\n\n", len(cycles))
+			_, _ = fmt.Fprintf(a.out, "Found %d circular dependency chain(s):\n\n", len(cycles))
 			for i, cycle := range cycles {
 				path := strings.Join(cycle, " → ")
-				fmt.Printf("  %d. %s → %s\n", i+1, path, cycle[0])
+				_, _ = fmt.Fprintf(a.out, "  %d. %s → %s\n", i+1, path, cycle[0])
 			}
 			return nil
 		},
 	}
 }
 
-func graphSPOFCmd() *cobra.Command {
+func (a *cliApp) graphSPOFCmd() *cobra.Command {
 	var minAffected int
 	var limit int
 
@@ -816,7 +875,10 @@ func graphSPOFCmd() *cobra.Command {
 		Use:   "spof",
 		Short: "Identify single points of failure ranked by blast radius",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, engine, _ := openStoreAndEngine()
+			store, engine, _, err := a.openStoreAndEngine()
+			if err != nil {
+				return err
+			}
 			defer store.Close()  //nolint:errcheck // best-effort cleanup
 			defer engine.Close() //nolint:errcheck // best-effort cleanup
 
@@ -826,7 +888,7 @@ func graphSPOFCmd() *cobra.Command {
 			}
 
 			if len(spofs) == 0 {
-				fmt.Println("No single points of failure found.")
+				_, _ = fmt.Fprintln(a.out, "No single points of failure found.")
 				return nil
 			}
 
@@ -834,8 +896,8 @@ func graphSPOFCmd() *cobra.Command {
 				spofs = spofs[:limit]
 			}
 
-			fmt.Printf("Top %d single points of failure (min affected: %d):\n\n", len(spofs), minAffected)
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			_, _ = fmt.Fprintf(a.out, "Top %d single points of failure (min affected: %d):\n\n", len(spofs), minAffected)
+			w := tabwriter.NewWriter(a.out, 0, 0, 2, ' ', 0)
 			_, _ = fmt.Fprintln(w, "RANK\tID\tNAME\tTYPE\tAFFECTED")
 			for i, s := range spofs {
 				_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%d\n", i+1, s.Node.ID, s.Node.Name, s.Node.Type, s.AffectedCount)
@@ -849,12 +911,15 @@ func graphSPOFCmd() *cobra.Command {
 	return cmd
 }
 
-func graphOrphansCmd() *cobra.Command {
+func (a *cliApp) graphOrphansCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "orphans",
 		Short: "List nodes with no connections",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, engine, _ := openStoreAndEngine()
+			store, engine, _, err := a.openStoreAndEngine()
+			if err != nil {
+				return err
+			}
 			defer store.Close()  //nolint:errcheck // best-effort cleanup
 			defer engine.Close() //nolint:errcheck // best-effort cleanup
 
@@ -864,12 +929,12 @@ func graphOrphansCmd() *cobra.Command {
 			}
 
 			if len(orphans) == 0 {
-				fmt.Println("No orphan nodes found.")
+				_, _ = fmt.Fprintln(a.out, "No orphan nodes found.")
 				return nil
 			}
 
-			fmt.Printf("Found %d orphan node(s):\n\n", len(orphans))
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			_, _ = fmt.Fprintf(a.out, "Found %d orphan node(s):\n\n", len(orphans))
+			w := tabwriter.NewWriter(a.out, 0, 0, 2, ' ', 0)
 			_, _ = fmt.Fprintln(w, "ID\tNAME\tTYPE\tSOURCE")
 			for _, n := range orphans {
 				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", n.ID, n.Name, n.Type, n.Source)
@@ -881,22 +946,25 @@ func graphOrphansCmd() *cobra.Command {
 
 // --- impact ---
 
-func impactCmd() *cobra.Command {
+func (a *cliApp) impactCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "impact",
 		Short: "Blast radius analysis",
 	}
-	cmd.AddCommand(impactNodeCmd())
+	cmd.AddCommand(a.impactNodeCmd())
 	return cmd
 }
 
-func impactNodeCmd() *cobra.Command {
+func (a *cliApp) impactNodeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "node <node-id>",
 		Short: "Analyze what breaks if a node fails",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, engine, _ := openStoreAndEngine()
+			store, engine, _, err := a.openStoreAndEngine()
+			if err != nil {
+				return err
+			}
 			defer store.Close() //nolint:errcheck // best-effort cleanup
 			defer engine.Close() //nolint:errcheck // best-effort cleanup
 			ctx := cmd.Context()
@@ -917,21 +985,21 @@ func impactNodeCmd() *cobra.Command {
 
 			// Count total affected
 			total := countTreeNodes(tree) - 1
-			fmt.Printf("\nImpact Analysis: %s\n", nodeID)
-			fmt.Printf("   Type: %s | Provider: %s | Source: %s\n", node.Type, node.Provider, node.Source)
-			fmt.Printf("\n   Blast Radius: %d affected assets\n\n", total)
+			_, _ = fmt.Fprintf(a.out, "\nImpact Analysis: %s\n", nodeID)
+			_, _ = fmt.Fprintf(a.out, "   Type: %s | Provider: %s | Source: %s\n", node.Type, node.Provider, node.Source)
+			_, _ = fmt.Fprintf(a.out, "\n   Blast Radius: %d affected assets\n\n", total)
 
-			printTree(ctx, tree, "   ", true)
+			a.printTree(ctx, tree, "   ", true)
 
 			// Check for expiring certs in the tree
 			warnings := collectWarnings(tree)
 			if len(warnings) > 0 {
-				fmt.Printf("\n   Warnings:\n")
+				_, _ = fmt.Fprintf(a.out, "\n   Warnings:\n")
 				for _, w := range warnings {
-					fmt.Printf("   - %s\n", w)
+					_, _ = fmt.Fprintf(a.out, "   - %s\n", w)
 				}
 			}
-			fmt.Println()
+			_, _ = fmt.Fprintln(a.out)
 
 			return nil
 		},
@@ -946,7 +1014,7 @@ func countTreeNodes(n *graph.ImpactNode) int {
 	return count
 }
 
-func printTree(ctx context.Context, n *graph.ImpactNode, prefix string, isRoot bool) {
+func (a *cliApp) printTree(ctx context.Context, n *graph.ImpactNode, prefix string, isRoot bool) {
 	label := n.NodeID
 	if n.Node != nil {
 		label = fmt.Sprintf("%s (%s)", n.NodeID, n.Node.Type)
@@ -959,7 +1027,7 @@ func printTree(ctx context.Context, n *graph.ImpactNode, prefix string, isRoot b
 	}
 
 	if isRoot {
-		fmt.Printf("%s%s\n", prefix, label)
+		_, _ = fmt.Fprintf(a.out, "%s%s\n", prefix, label)
 	}
 
 	for i, child := range n.Children {
@@ -979,8 +1047,8 @@ func printTree(ctx context.Context, n *graph.ImpactNode, prefix string, isRoot b
 				}
 			}
 		}
-		fmt.Printf("%s%s[%s] %s\n", prefix, connector, child.EdgeType, childLabel)
-		printTree(ctx, &child, childPrefix, false)
+		_, _ = fmt.Fprintf(a.out, "%s%s[%s] %s\n", prefix, connector, child.EdgeType, childLabel)
+		a.printTree(ctx, &child, childPrefix, false)
 	}
 }
 
@@ -1000,36 +1068,39 @@ func collectWarnings(n *graph.ImpactNode) []string {
 
 // --- certs ---
 
-func certsCmd() *cobra.Command {
+func (a *cliApp) certsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "certs",
 		Short: "Certificate management",
 	}
-	cmd.AddCommand(certsListCmd(), certsExpiringCmd(), certsProbeCmd(), certsCheckCmd())
+	cmd.AddCommand(a.certsListCmd(), a.certsExpiringCmd(), a.certsProbeCmd(), a.certsCheckCmd())
 	return cmd
 }
 
-func certsListCmd() *cobra.Command {
+func (a *cliApp) certsListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List all tracked certificates",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, cfg := openStore()
+			store, cfg, err := a.openStore()
+			if err != nil {
+				return err
+			}
 			defer store.Close() //nolint:errcheck // best-effort cleanup
 			ctx := cmd.Context()
 
-			tracker := certs.NewTracker(store, cfg.Certs.AlertThresholds, logger)
+			tracker := certs.NewTracker(store, cfg.Certs.AlertThresholds, a.logger)
 			certList, err := tracker.ListCerts(ctx)
 			if err != nil {
 				return err
 			}
 
 			if len(certList) == 0 {
-				fmt.Println("No certificates found. Run a scan or probe first.")
+				_, _ = fmt.Fprintln(a.out, "No certificates found. Run a scan or probe first.")
 				return nil
 			}
 
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			w := tabwriter.NewWriter(a.out, 0, 0, 2, ' ', 0)
 			_, _ = fmt.Fprintln(w, "ID\tNAME\tEXPIRES\tDAYS\tSTATUS")
 			for _, c := range certList {
 				expires := "-"
@@ -1044,29 +1115,32 @@ func certsListCmd() *cobra.Command {
 	}
 }
 
-func certsExpiringCmd() *cobra.Command {
+func (a *cliApp) certsExpiringCmd() *cobra.Command {
 	var days int
 
 	cmd := &cobra.Command{
 		Use:   "expiring",
 		Short: "Show certificates expiring within threshold",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, cfg := openStore()
+			store, cfg, err := a.openStore()
+			if err != nil {
+				return err
+			}
 			defer store.Close() //nolint:errcheck // best-effort cleanup
 			ctx := cmd.Context()
 
-			tracker := certs.NewTracker(store, cfg.Certs.AlertThresholds, logger)
+			tracker := certs.NewTracker(store, cfg.Certs.AlertThresholds, a.logger)
 			certList, err := tracker.ExpiringCerts(ctx, days)
 			if err != nil {
 				return err
 			}
 
 			if len(certList) == 0 {
-				fmt.Printf("No certificates expiring within %d days.\n", days)
+				_, _ = fmt.Fprintf(a.out, "No certificates expiring within %d days.\n", days)
 				return nil
 			}
 
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			w := tabwriter.NewWriter(a.out, 0, 0, 2, ' ', 0)
 			_, _ = fmt.Fprintln(w, "ID\tNAME\tEXPIRES\tDAYS\tSTATUS")
 			for _, c := range certList {
 				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n",
@@ -1080,45 +1154,51 @@ func certsExpiringCmd() *cobra.Command {
 	return cmd
 }
 
-func certsProbeCmd() *cobra.Command {
+func (a *cliApp) certsProbeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "probe <host:port>",
 		Short: "Probe a TLS endpoint",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, cfg := openStore()
+			store, cfg, err := a.openStore()
+			if err != nil {
+				return err
+			}
 			defer store.Close() //nolint:errcheck // best-effort cleanup
 			ctx := cmd.Context()
 
-			tracker := certs.NewTracker(store, cfg.Certs.AlertThresholds, logger)
+			tracker := certs.NewTracker(store, cfg.Certs.AlertThresholds, a.logger)
 			ci, err := tracker.ProbeAndStore(ctx, args[0])
 			if err != nil {
 				return err
 			}
 
-			fmt.Printf("Certificate: %s\n", ci.Node.Name)
-			fmt.Printf("  ID:      %s\n", ci.Node.ID)
-			fmt.Printf("  Issuer:  %s\n", ci.Node.Provider)
+			_, _ = fmt.Fprintf(a.out, "Certificate: %s\n", ci.Node.Name)
+			_, _ = fmt.Fprintf(a.out, "  ID:      %s\n", ci.Node.ID)
+			_, _ = fmt.Fprintf(a.out, "  Issuer:  %s\n", ci.Node.Provider)
 			if ci.Node.ExpiresAt != nil {
-				fmt.Printf("  Expires: %s (%d days)\n", ci.Node.ExpiresAt.Format("2006-01-02"), ci.DaysRemaining)
+				_, _ = fmt.Fprintf(a.out, "  Expires: %s (%d days)\n", ci.Node.ExpiresAt.Format("2006-01-02"), ci.DaysRemaining)
 			}
-			fmt.Printf("  Status:  %s\n", strings.ToUpper(ci.Status))
+			_, _ = fmt.Fprintf(a.out, "  Status:  %s\n", strings.ToUpper(ci.Status))
 			return nil
 		},
 	}
 }
 
-func certsCheckCmd() *cobra.Command {
+func (a *cliApp) certsCheckCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "check",
 		Short: "Re-probe all known certificate endpoints",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, cfg := openStore()
+			store, cfg, err := a.openStore()
+			if err != nil {
+				return err
+			}
 			defer store.Close() //nolint:errcheck // best-effort cleanup
 			ctx := cmd.Context()
 
-			tracker := certs.NewTracker(store, cfg.Certs.AlertThresholds, logger)
-			results := certs.ProbeAll(ctx, tracker, store, logger)
+			tracker := certs.NewTracker(store, cfg.Certs.AlertThresholds, a.logger)
+			results := certs.ProbeAll(ctx, tracker, store, a.logger)
 
 			// Send alerts for expiring certs
 			var alerters []alert.Alerter
@@ -1159,7 +1239,7 @@ func certsCheckCmd() *cobra.Command {
 
 // --- serve ---
 
-func serveCmd() *cobra.Command {
+func (a *cliApp) serveCmd() *cobra.Command {
 	var listen string
 	var readOnly bool
 
@@ -1167,15 +1247,18 @@ func serveCmd() *cobra.Command {
 		Use:   "serve",
 		Short: "Start web UI and API server",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, engine, cfg := openStoreAndEngine()
+			store, engine, cfg, err := a.openStoreAndEngine()
+			if err != nil {
+				return err
+			}
 
 			if listen == "" {
 				listen = cfg.Server.Listen
 			}
 
-			tracker := certs.NewTracker(store, cfg.Certs.AlertThresholds, logger)
-			sc := scanner.New(store, cfg, logger)
-			srv := server.New(store, engine, tracker, sc, logger, listen, readOnly || cfg.Server.ReadOnly, cfg.Server.APIToken, cfg.Server.CORSOrigin, cfg.Scan.AllowedPaths, version)
+			tracker := certs.NewTracker(store, cfg.Certs.AlertThresholds, a.logger)
+			sc := scanner.New(store, cfg, a.logger)
+			srv := server.New(store, engine, tracker, sc, a.logger, listen, readOnly || cfg.Server.ReadOnly, cfg.Server.APIToken, cfg.Server.CORSOrigin, cfg.Scan.AllowedPaths, a.version)
 
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 			defer stop()
@@ -1183,13 +1266,13 @@ func serveCmd() *cobra.Command {
 			// On-startup scan (cancelled when server shuts down)
 			if cfg.Scan.OnStartup && len(cfg.Sources.Terraform)+len(cfg.Sources.Kubernetes)+len(cfg.Sources.Ansible)+len(cfg.Sources.Compose) > 0 {
 				go func() {
-					logger.Info("running startup scan")
+					a.logger.Info("running startup scan")
 					results := sc.RunAllConfigured(ctx)
 					for _, r := range results {
 						if r.Error != nil {
-							logger.Error("startup scan failed", "error", r.Error)
+							a.logger.Error("startup scan failed", "error", r.Error)
 						} else {
-							logger.Info("startup scan completed", "scanID", r.ScanID,
+							a.logger.Info("startup scan completed", "scanID", r.ScanID,
 								"nodes", r.NodesFound, "edges", r.EdgesFound)
 						}
 					}
@@ -1205,9 +1288,9 @@ func serveCmd() *cobra.Command {
 				if cfg.Alerts.Webhook.Enabled && cfg.Alerts.Webhook.URL != "" {
 					alerters = append(alerters, alert.NewWebhookAlerter(cfg.Alerts.Webhook.URL, cfg.Alerts.Webhook.Headers))
 				}
-				certSched, err := certs.NewCertScheduler(tracker, store, alert.NewMulti(alerters...), cfg.Certs.ProbeInterval, logger)
+				certSched, err := certs.NewCertScheduler(tracker, store, alert.NewMulti(alerters...), cfg.Certs.ProbeInterval, a.logger)
 				if err != nil {
-					logger.Error("invalid cert probe interval", "error", err)
+					a.logger.Error("invalid cert probe interval", "error", err)
 				} else {
 					certSched.Start(ctx)
 					defer certSched.Stop()
@@ -1216,9 +1299,9 @@ func serveCmd() *cobra.Command {
 
 			// Scheduled scans
 			if cfg.Scan.Schedule != "" {
-				sched, err := scanner.NewScheduler(sc, cfg.Scan.Schedule, logger)
+				sched, err := scanner.NewScheduler(sc, cfg.Scan.Schedule, a.logger)
 				if err != nil {
-					logger.Error("invalid scan schedule", "error", err)
+					a.logger.Error("invalid scan schedule", "error", err)
 				} else {
 					sched.Start(ctx)
 					defer sched.Stop()
@@ -1245,27 +1328,30 @@ func serveCmd() *cobra.Command {
 
 // --- db ---
 
-func dbCmd() *cobra.Command {
+func (a *cliApp) dbCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "db",
 		Short: "Database management",
 	}
-	cmd.AddCommand(dbStatsCmd(), dbBackupCmd())
+	cmd.AddCommand(a.dbStatsCmd(), a.dbBackupCmd())
 	return cmd
 }
 
-func dbStatsCmd() *cobra.Command {
+func (a *cliApp) dbStatsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stats",
 		Short: "Show database statistics",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, cfg := openStore()
+			store, cfg, err := a.openStore()
+			if err != nil {
+				return err
+			}
 			defer store.Close() //nolint:errcheck // best-effort cleanup
 			ctx := cmd.Context()
 
 			path := cfg.Storage.Path
-			if dbPath != "" {
-				path = dbPath
+			if a.dbPath != "" {
+				path = a.dbPath
 			}
 
 			// File size
@@ -1283,14 +1369,14 @@ func dbStatsCmd() *cobra.Command {
 			edgesByType, _ := store.EdgeCountByType(ctx)
 			scans, _ := store.ListScans(ctx, 100)
 
-			_, _ = fmt.Fprintf(os.Stdout, "Database: %s (%s)\n\n", path, sizeStr)
-			_, _ = fmt.Fprintf(os.Stdout, "Nodes: %d\n", nodeCount)
+			_, _ = fmt.Fprintf(a.out, "Database: %s (%s)\n\n", path, sizeStr)
+			_, _ = fmt.Fprintf(a.out, "Nodes: %d\n", nodeCount)
 			for t, c := range nodesByType {
-				_, _ = fmt.Fprintf(os.Stdout, "  %-20s %d\n", t, c)
+				_, _ = fmt.Fprintf(a.out, "  %-20s %d\n", t, c)
 			}
-			_, _ = fmt.Fprintf(os.Stdout, "\nEdges: %d\n", edgeCount)
+			_, _ = fmt.Fprintf(a.out, "\nEdges: %d\n", edgeCount)
 			for t, c := range edgesByType {
-				_, _ = fmt.Fprintf(os.Stdout, "  %-20s %d\n", t, c)
+				_, _ = fmt.Fprintf(a.out, "  %-20s %d\n", t, c)
 			}
 
 			// Scan summary
@@ -1298,9 +1384,9 @@ func dbStatsCmd() *cobra.Command {
 			for _, s := range scans {
 				statusCounts[s.Status]++
 			}
-			_, _ = fmt.Fprintf(os.Stdout, "\nScans: %d total\n", len(scans))
+			_, _ = fmt.Fprintf(a.out, "\nScans: %d total\n", len(scans))
 			for status, count := range statusCounts {
-				_, _ = fmt.Fprintf(os.Stdout, "  %-20s %d\n", status, count)
+				_, _ = fmt.Fprintf(a.out, "  %-20s %d\n", status, count)
 			}
 
 			return nil
@@ -1308,31 +1394,31 @@ func dbStatsCmd() *cobra.Command {
 	}
 }
 
-func dbBackupCmd() *cobra.Command {
+func (a *cliApp) dbBackupCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "backup <output-path>",
 		Short: "Copy database file to a backup location",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load(cfgFile)
+			cfg, err := config.Load(a.cfgFile)
 			if err != nil {
 				return err
 			}
 
 			srcPath := cfg.Storage.Path
-			if dbPath != "" {
-				srcPath = dbPath
+			if a.dbPath != "" {
+				srcPath = a.dbPath
 			}
 			dstPath := args[0]
 
 			// Check if destination exists
 			if _, err := os.Stat(dstPath); err == nil {
-				_, _ = fmt.Fprintf(os.Stdout, "File %s already exists. Overwrite? [y/N]: ", dstPath)
-				reader := bufio.NewReader(os.Stdin)
+				_, _ = fmt.Fprintf(a.out, "File %s already exists. Overwrite? [y/N]: ", dstPath)
+				reader := bufio.NewReader(a.in)
 				answer, _ := reader.ReadString('\n')
 				answer = strings.TrimSpace(strings.ToLower(answer))
 				if answer != "y" && answer != "yes" {
-					_, _ = fmt.Fprintln(os.Stdout, "Aborted.")
+					_, _ = fmt.Fprintln(a.out, "Aborted.")
 					return nil
 				}
 			}
@@ -1359,7 +1445,7 @@ func dbBackupCmd() *cobra.Command {
 				return fmt.Errorf("copying database: %w", err)
 			}
 
-			_, _ = fmt.Fprintf(os.Stdout, "Backed up %s to %s (%s)\n", srcPath, dstPath, formatBytes(n))
+			_, _ = fmt.Fprintf(a.out, "Backed up %s to %s (%s)\n", srcPath, dstPath, formatBytes(n))
 			return nil
 		},
 	}
@@ -1380,12 +1466,12 @@ func formatBytes(b int64) string {
 
 // --- version ---
 
-func versionCmd() *cobra.Command {
+func (a *cliApp) versionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print version",
 		Run: func(_ *cobra.Command, _ []string) {
-			fmt.Printf("aib %s\n", version)
+			_, _ = fmt.Fprintf(a.out, "aib %s\n", a.version)
 		},
 	}
 }
@@ -1405,7 +1491,7 @@ func parseLogLevel(s string) (slog.Level, error) {
 	}
 }
 
-func completionCmd() *cobra.Command {
+func (a *cliApp) completionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "completion [bash|zsh|fish|powershell]",
 		Short: "Generate shell completion scripts",
@@ -1445,17 +1531,16 @@ PowerShell:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch args[0] {
 			case "bash":
-				return cmd.Root().GenBashCompletion(os.Stdout)
+				return cmd.Root().GenBashCompletion(a.out)
 			case "zsh":
-				return cmd.Root().GenZshCompletion(os.Stdout)
+				return cmd.Root().GenZshCompletion(a.out)
 			case "fish":
-				return cmd.Root().GenFishCompletion(os.Stdout, true)
+				return cmd.Root().GenFishCompletion(a.out, true)
 			case "powershell":
-				return cmd.Root().GenPowerShellCompletionWithDesc(os.Stdout)
+				return cmd.Root().GenPowerShellCompletionWithDesc(a.out)
 			default:
 				return fmt.Errorf("unsupported shell: %s", args[0])
 			}
 		},
 	}
 }
-

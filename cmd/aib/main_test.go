@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
-	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +18,69 @@ import (
 	"github.com/spf13/cobra"
 	_ "modernc.org/sqlite"
 )
+
+// newTestApp returns a cliApp wired to a temp DB and captured output buffer.
+func newTestApp(t *testing.T) (*cliApp, *bytes.Buffer) {
+	t.Helper()
+	var buf bytes.Buffer
+	app := &cliApp{
+		dbPath:    filepath.Join(t.TempDir(), "test.db"),
+		logFormat: "text",
+		logLevel:  "info",
+		version:   "test",
+		out:       &buf,
+		errOut:    io.Discard,
+		in:        strings.NewReader(""),
+		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	return app, &buf
+}
+
+// seedTestData pre-populates 2 nodes and 1 edge via the app's store, then closes it.
+// The caller's command will reopen the store via a.openStore().
+func seedTestData(t *testing.T, app *cliApp) {
+	t.Helper()
+	store, _, err := app.openStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	now := time.Now().Truncate(time.Second)
+	if err := store.UpsertNode(ctx, models.Node{
+		ID: "vm:web1", Name: "web1", Type: models.AssetVM,
+		Source: "terraform", Provider: "aws", Metadata: map[string]string{},
+		LastSeen: now, FirstSeen: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertNode(ctx, models.Node{
+		ID: "db:pg1", Name: "pg1", Type: models.AssetDatabase,
+		Source: "terraform", Provider: "aws", Metadata: map[string]string{},
+		LastSeen: now, FirstSeen: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertEdge(ctx, models.Edge{
+		FromID: "vm:web1", ToID: "db:pg1", Type: models.EdgeDependsOn,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// runCmd executes a cobra command attached to a root, returning any error.
+func runCmd(app *cliApp, cmd *cobra.Command, args ...string) error {
+	root := &cobra.Command{Use: "aib"}
+	root.AddCommand(cmd)
+	root.SetArgs(args)
+	root.SetOut(app.out)
+	root.SetErr(app.errOut)
+	return root.Execute()
+}
+
+// --- Pure utility tests (no cliApp needed) ---
 
 func TestParseLogLevel(t *testing.T) {
 	tests := []struct {
@@ -99,140 +164,6 @@ func TestCountTreeNodes_Leaf(t *testing.T) {
 	}
 }
 
-func TestVersionCmd(t *testing.T) {
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	cmd := versionCmd()
-	cmd.Run(cmd, nil)
-
-	_ = w.Close()
-	os.Stdout = old
-
-	var buf bytes.Buffer
-	_, _ = buf.ReadFrom(r)
-	output := buf.String()
-
-	if output == "" {
-		t.Error("version command produced no output")
-	}
-	if !strings.Contains(output, "aib") {
-		t.Errorf("version output should contain 'aib', got %q", output)
-	}
-}
-
-func TestCompletionCmd_Bash(t *testing.T) {
-	root := &cobra.Command{Use: "aib"}
-	root.AddCommand(completionCmd())
-
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	root.SetArgs([]string{"completion", "bash"})
-	err := root.Execute()
-
-	_ = w.Close()
-	os.Stdout = old
-
-	var buf bytes.Buffer
-	_, _ = buf.ReadFrom(r)
-
-	if err != nil {
-		t.Fatalf("completion bash error: %v", err)
-	}
-	if buf.Len() == 0 {
-		t.Error("completion bash produced no output")
-	}
-}
-
-func TestCompletionCmd_Zsh(t *testing.T) {
-	root := &cobra.Command{Use: "aib"}
-	root.AddCommand(completionCmd())
-
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	root.SetArgs([]string{"completion", "zsh"})
-	err := root.Execute()
-
-	_ = w.Close()
-	os.Stdout = old
-
-	var buf bytes.Buffer
-	_, _ = buf.ReadFrom(r)
-
-	if err != nil {
-		t.Fatalf("completion zsh error: %v", err)
-	}
-	if buf.Len() == 0 {
-		t.Error("completion zsh produced no output")
-	}
-}
-
-func TestCompletionCmd_Fish(t *testing.T) {
-	root := &cobra.Command{Use: "aib"}
-	root.AddCommand(completionCmd())
-
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	root.SetArgs([]string{"completion", "fish"})
-	err := root.Execute()
-
-	_ = w.Close()
-	os.Stdout = old
-
-	var buf bytes.Buffer
-	_, _ = buf.ReadFrom(r)
-
-	if err != nil {
-		t.Fatalf("completion fish error: %v", err)
-	}
-	if buf.Len() == 0 {
-		t.Error("completion fish produced no output")
-	}
-}
-
-func TestCompletionCmd_PowerShell(t *testing.T) {
-	root := &cobra.Command{Use: "aib"}
-	root.AddCommand(completionCmd())
-
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	root.SetArgs([]string{"completion", "powershell"})
-	err := root.Execute()
-
-	_ = w.Close()
-	os.Stdout = old
-
-	var buf bytes.Buffer
-	_, _ = buf.ReadFrom(r)
-
-	if err != nil {
-		t.Fatalf("completion powershell error: %v", err)
-	}
-	if buf.Len() == 0 {
-		t.Error("completion powershell produced no output")
-	}
-}
-
-func TestCompletionCmd_InvalidShell(t *testing.T) {
-	root := &cobra.Command{Use: "aib"}
-	root.AddCommand(completionCmd())
-
-	root.SetArgs([]string{"completion", "invalid"})
-	err := root.Execute()
-	if err == nil {
-		t.Error("expected error for invalid shell")
-	}
-}
-
 func TestCollectWarnings_NoExpiry(t *testing.T) {
 	tree := &graph.ImpactNode{
 		NodeID: "root",
@@ -282,25 +213,88 @@ func TestCollectWarnings_Recursive(t *testing.T) {
 	}
 }
 
-func TestPrintScanResult_Success(t *testing.T) {
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
+// --- version ---
 
-	printScanResult(scanner.ScanResult{
+func TestVersionCmd(t *testing.T) {
+	app, buf := newTestApp(t)
+	cmd := app.versionCmd()
+	cmd.Run(cmd, nil)
+
+	output := buf.String()
+	if !strings.Contains(output, "aib") {
+		t.Errorf("version output should contain 'aib', got %q", output)
+	}
+	if !strings.Contains(output, "test") {
+		t.Errorf("version output should contain 'test', got %q", output)
+	}
+}
+
+// --- completion ---
+
+func TestCompletionCmd_Bash(t *testing.T) {
+	app, buf := newTestApp(t)
+	err := runCmd(app, app.completionCmd(), "completion", "bash")
+	if err != nil {
+		t.Fatalf("completion bash error: %v", err)
+	}
+	if buf.Len() == 0 {
+		t.Error("completion bash produced no output")
+	}
+}
+
+func TestCompletionCmd_Zsh(t *testing.T) {
+	app, buf := newTestApp(t)
+	err := runCmd(app, app.completionCmd(), "completion", "zsh")
+	if err != nil {
+		t.Fatalf("completion zsh error: %v", err)
+	}
+	if buf.Len() == 0 {
+		t.Error("completion zsh produced no output")
+	}
+}
+
+func TestCompletionCmd_Fish(t *testing.T) {
+	app, buf := newTestApp(t)
+	err := runCmd(app, app.completionCmd(), "completion", "fish")
+	if err != nil {
+		t.Fatalf("completion fish error: %v", err)
+	}
+	if buf.Len() == 0 {
+		t.Error("completion fish produced no output")
+	}
+}
+
+func TestCompletionCmd_PowerShell(t *testing.T) {
+	app, buf := newTestApp(t)
+	err := runCmd(app, app.completionCmd(), "completion", "powershell")
+	if err != nil {
+		t.Fatalf("completion powershell error: %v", err)
+	}
+	if buf.Len() == 0 {
+		t.Error("completion powershell produced no output")
+	}
+}
+
+func TestCompletionCmd_InvalidShell(t *testing.T) {
+	app, _ := newTestApp(t)
+	err := runCmd(app, app.completionCmd(), "completion", "invalid")
+	if err == nil {
+		t.Error("expected error for invalid shell")
+	}
+}
+
+// --- printScanResult ---
+
+func TestPrintScanResult_Success(t *testing.T) {
+	app, buf := newTestApp(t)
+	app.printScanResult(scanner.ScanResult{
 		ScanID:     1,
 		NodesFound: 10,
 		EdgesFound: 5,
 		Warnings:   []string{"missing provider"},
 	})
 
-	_ = w.Close()
-	os.Stdout = old
-
-	var buf bytes.Buffer
-	_, _ = buf.ReadFrom(r)
 	output := buf.String()
-
 	if !strings.Contains(output, "10 nodes") {
 		t.Errorf("output should mention nodes, got: %s", output)
 	}
@@ -313,30 +307,21 @@ func TestPrintScanResult_Success(t *testing.T) {
 }
 
 func TestPrintScanResult_Error(t *testing.T) {
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	printScanResult(scanner.ScanResult{
+	app, buf := newTestApp(t)
+	app.printScanResult(scanner.ScanResult{
 		Error: fmt.Errorf("scan failed"),
 	})
 
-	_ = w.Close()
-	os.Stdout = old
-
-	var buf bytes.Buffer
-	_, _ = buf.ReadFrom(r)
 	output := buf.String()
-
 	if !strings.Contains(output, "failed") {
 		t.Errorf("output should mention failure, got: %s", output)
 	}
 }
 
+// --- printTree ---
+
 func TestPrintTree(t *testing.T) {
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
+	app, buf := newTestApp(t)
 
 	tree := &graph.ImpactNode{
 		NodeID: "root",
@@ -355,15 +340,9 @@ func TestPrintTree(t *testing.T) {
 		},
 	}
 
-	printTree(context.Background(), tree, "  ", true)
+	app.printTree(context.Background(), tree, "  ", true)
 
-	_ = w.Close()
-	os.Stdout = old
-
-	var buf bytes.Buffer
-	_, _ = buf.ReadFrom(r)
 	output := buf.String()
-
 	if !strings.Contains(output, "root") {
 		t.Errorf("output should contain root, got: %s", output)
 	}
@@ -372,41 +351,384 @@ func TestPrintTree(t *testing.T) {
 	}
 }
 
-func TestGraphShowCmd_WithPreseededDB(t *testing.T) {
-	dbPath := t.TempDir() + "/test.db"
-	store, err := graph.NewSQLiteStore(dbPath)
+// --- openStore error handling ---
+
+func TestOpenStore_InvalidConfig(t *testing.T) {
+	app, _ := newTestApp(t)
+	app.cfgFile = "/nonexistent/config.yaml"
+	_, _, err := app.openStore()
+	if err == nil {
+		t.Error("expected error for nonexistent config")
+	}
+}
+
+// --- graph show ---
+
+func TestGraphShowCmd(t *testing.T) {
+	app, buf := newTestApp(t)
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphShowCmd(), "show")
+	if err != nil {
+		t.Fatalf("graph show error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Total nodes: 2") {
+		t.Errorf("expected 'Total nodes: 2' in output, got: %s", output)
+	}
+	if !strings.Contains(output, "Total edges: 1") {
+		t.Errorf("expected 'Total edges: 1' in output, got: %s", output)
+	}
+}
+
+// --- graph nodes ---
+
+func TestGraphNodesCmd(t *testing.T) {
+	app, buf := newTestApp(t)
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphNodesCmd(), "nodes")
+	if err != nil {
+		t.Fatalf("graph nodes error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "vm:web1") {
+		t.Errorf("expected 'vm:web1' in output, got: %s", output)
+	}
+	if !strings.Contains(output, "db:pg1") {
+		t.Errorf("expected 'db:pg1' in output, got: %s", output)
+	}
+}
+
+func TestGraphNodesCmd_Filter(t *testing.T) {
+	app, buf := newTestApp(t)
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphNodesCmd(), "nodes", "--type", string(models.AssetVM))
+	if err != nil {
+		t.Fatalf("graph nodes --type error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "vm:web1") {
+		t.Errorf("expected 'vm:web1' in output, got: %s", output)
+	}
+	if strings.Contains(output, "db:pg1") {
+		t.Errorf("db:pg1 should be filtered out, got: %s", output)
+	}
+}
+
+// --- graph edges ---
+
+func TestGraphEdgesCmd(t *testing.T) {
+	app, buf := newTestApp(t)
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphEdgesCmd(), "edges")
+	if err != nil {
+		t.Fatalf("graph edges error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "vm:web1") {
+		t.Errorf("expected 'vm:web1' in edges output, got: %s", output)
+	}
+	if !strings.Contains(output, "db:pg1") {
+		t.Errorf("expected 'db:pg1' in edges output, got: %s", output)
+	}
+}
+
+// --- graph neighbors ---
+
+func TestGraphNeighborsCmd(t *testing.T) {
+	app, buf := newTestApp(t)
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphNeighborsCmd(), "neighbors", "vm:web1")
+	if err != nil {
+		t.Fatalf("graph neighbors error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "db:pg1") {
+		t.Errorf("expected neighbor 'db:pg1' in output, got: %s", output)
+	}
+}
+
+func TestGraphNeighborsCmd_NotFound(t *testing.T) {
+	app, _ := newTestApp(t)
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphNeighborsCmd(), "neighbors", "nonexistent:node")
+	if err == nil {
+		t.Error("expected error for nonexistent node")
+	}
+}
+
+// --- graph export ---
+
+func TestGraphExportCmd_JSON(t *testing.T) {
+	app, buf := newTestApp(t)
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphExportCmd(), "export", "--format", "json")
+	if err != nil {
+		t.Fatalf("graph export json error: %v", err)
+	}
+
+	output := buf.String()
+	// Validate it's valid JSON
+	var parsed interface{}
+	if err := json.Unmarshal([]byte(output), &parsed); err != nil {
+		t.Errorf("export JSON is not valid JSON: %v\nOutput: %s", err, output)
+	}
+}
+
+func TestGraphExportCmd_DOT(t *testing.T) {
+	app, buf := newTestApp(t)
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphExportCmd(), "export", "--format", "dot")
+	if err != nil {
+		t.Fatalf("graph export dot error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "digraph") {
+		t.Errorf("export DOT should contain 'digraph', got: %s", output)
+	}
+}
+
+// --- graph path ---
+
+func TestGraphPathCmd(t *testing.T) {
+	app, buf := newTestApp(t)
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphPathCmd(), "path", "vm:web1", "db:pg1")
+	if err != nil {
+		t.Fatalf("graph path error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Shortest path") {
+		t.Errorf("expected 'Shortest path' in output, got: %s", output)
+	}
+}
+
+// --- graph deps ---
+
+func TestGraphDepsCmd(t *testing.T) {
+	app, buf := newTestApp(t)
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphDepsCmd(), "deps", "vm:web1")
+	if err != nil {
+		t.Fatalf("graph deps error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Dependencies of") {
+		t.Errorf("expected 'Dependencies of' in output, got: %s", output)
+	}
+}
+
+// --- graph cycles ---
+
+func TestGraphCyclesCmd(t *testing.T) {
+	app, buf := newTestApp(t)
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphCyclesCmd(), "cycles")
+	if err != nil {
+		t.Fatalf("graph cycles error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "No circular dependencies found.") {
+		t.Errorf("expected no cycles message, got: %s", output)
+	}
+}
+
+// --- graph spof ---
+
+func TestGraphSPOFCmd(t *testing.T) {
+	app, buf := newTestApp(t)
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphSPOFCmd(), "spof")
+	if err != nil {
+		t.Fatalf("graph spof error: %v", err)
+	}
+
+	output := buf.String()
+	// With 2 nodes and 1 edge, there may or may not be SPOFs depending on direction
+	if output == "" {
+		t.Error("expected some output from spof command")
+	}
+}
+
+// --- graph orphans ---
+
+func TestGraphOrphansCmd(t *testing.T) {
+	app, buf := newTestApp(t)
+	// Seed data, then add an orphan node
+	seedTestData(t, app)
+
+	store, _, err := app.openStore()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Init(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
 	now := time.Now().Truncate(time.Second)
-	ctx := context.Background()
-	_ = store.UpsertNode(ctx, models.Node{
-		ID: "vm:web1", Name: "web1", Type: models.AssetVM,
-		Source: "terraform", Metadata: map[string]string{},
-		LastSeen: now, FirstSeen: now,
-	})
-	_ = store.UpsertNode(ctx, models.Node{
-		ID: "db:pg1", Name: "pg1", Type: models.AssetDatabase,
+	_ = store.UpsertNode(context.Background(), models.Node{
+		ID: "orphan:lonely", Name: "lonely", Type: models.AssetVM,
 		Source: "terraform", Metadata: map[string]string{},
 		LastSeen: now, FirstSeen: now,
 	})
 	_ = store.Close()
 
-	nodeCount := 2
+	err = runCmd(app, app.graphOrphansCmd(), "orphans")
+	if err != nil {
+		t.Fatalf("graph orphans error: %v", err)
+	}
 
-	// Re-read from the file to verify
-	store2, err := graph.NewSQLiteStore(dbPath)
+	output := buf.String()
+	if !strings.Contains(output, "orphan:lonely") {
+		t.Errorf("expected 'orphan:lonely' in output, got: %s", output)
+	}
+}
+
+// --- graph prune ---
+
+func TestGraphPruneCmd_Force(t *testing.T) {
+	app, buf := newTestApp(t)
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphPruneCmd(), "prune", "--source", "terraform", "--force")
+	if err != nil {
+		t.Fatalf("graph prune error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Deleted") {
+		t.Errorf("expected 'Deleted' in output, got: %s", output)
+	}
+}
+
+func TestGraphPruneCmd_NoFilter(t *testing.T) {
+	app, _ := newTestApp(t)
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphPruneCmd(), "prune")
+	if err == nil {
+		t.Error("expected error when no filter is specified")
+	}
+}
+
+// --- impact node ---
+
+func TestImpactNodeCmd(t *testing.T) {
+	app, buf := newTestApp(t)
+	seedTestData(t, app)
+
+	err := runCmd(app, app.impactCmd(), "impact", "node", "db:pg1")
+	if err != nil {
+		t.Fatalf("impact node error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Impact Analysis") {
+		t.Errorf("expected 'Impact Analysis' in output, got: %s", output)
+	}
+	if !strings.Contains(output, "Blast Radius") {
+		t.Errorf("expected 'Blast Radius' in output, got: %s", output)
+	}
+}
+
+func TestImpactNodeCmd_NotFound(t *testing.T) {
+	app, _ := newTestApp(t)
+	seedTestData(t, app)
+
+	err := runCmd(app, app.impactCmd(), "impact", "node", "nonexistent:node")
+	if err == nil {
+		t.Error("expected error for nonexistent node")
+	}
+}
+
+// --- scan commands (real fixtures) ---
+
+func TestScanTerraformCmd(t *testing.T) {
+	app, buf := newTestApp(t)
+
+	fixture, err := filepath.Abs("../../testdata/terraform/sample.tfstate")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = store2.Init(ctx)
-	nc, _ := store2.NodeCount(ctx)
-	_ = store2.Close()
-	if nc != nodeCount {
-		t.Fatalf("expected %d nodes in pre-seeded DB, got %d", nodeCount, nc)
+
+	err = runCmd(app, app.scanCmd(), "scan", "terraform", fixture)
+	if err != nil {
+		t.Fatalf("scan terraform error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Discovered") {
+		t.Errorf("expected 'Discovered' in output, got: %s", output)
+	}
+}
+
+func TestScanCloudFormationCmd(t *testing.T) {
+	app, buf := newTestApp(t)
+
+	fixture, err := filepath.Abs("../../testdata/cloudformation/template.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = runCmd(app, app.scanCmd(), "scan", "cloudformation", fixture)
+	if err != nil {
+		t.Fatalf("scan cloudformation error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Discovered") {
+		t.Errorf("expected 'Discovered' in output, got: %s", output)
+	}
+}
+
+func TestScanPulumiCmd(t *testing.T) {
+	app, buf := newTestApp(t)
+
+	fixture, err := filepath.Abs("../../internal/parser/pulumi/testdata/simple.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = runCmd(app, app.scanCmd(), "scan", "pulumi", fixture)
+	if err != nil {
+		t.Fatalf("scan pulumi error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Discovered") {
+		t.Errorf("expected 'Discovered' in output, got: %s", output)
+	}
+}
+
+// --- db stats ---
+
+func TestDBStatsCmd(t *testing.T) {
+	app, buf := newTestApp(t)
+	seedTestData(t, app)
+
+	err := runCmd(app, app.dbCmd(), "db", "stats")
+	if err != nil {
+		t.Fatalf("db stats error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Nodes: 2") {
+		t.Errorf("expected 'Nodes: 2' in output, got: %s", output)
 	}
 }
