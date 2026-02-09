@@ -59,6 +59,12 @@ type Store interface {
 
 	// FindOrphanNodes returns nodes that have no edges (neither incoming nor outgoing).
 	FindOrphanNodes(ctx context.Context) ([]models.Node, error)
+
+	// StoreDiff persists a drift summary for a scan.
+	StoreDiff(ctx context.Context, scanID int64, summary *DriftSummary) error
+
+	// GetDiff retrieves the drift summary for a scan. Returns nil if not found.
+	GetDiff(ctx context.Context, scanID int64) (*DriftSummary, error)
 }
 
 // NodeFilter specifies criteria for listing nodes.

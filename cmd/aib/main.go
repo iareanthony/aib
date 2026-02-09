@@ -361,6 +361,18 @@ func printScanResult(r scanner.ScanResult) {
 	for _, w := range r.Warnings {
 		fmt.Printf("  warning: %s\n", w)
 	}
+
+	if r.Drift != nil {
+		if r.Drift.IsInitial {
+			fmt.Println("Drift: (initial scan — all assets are new)")
+		} else if !r.Drift.HasChanges() {
+			fmt.Println("No drift detected")
+		} else {
+			fmt.Printf("Drift: %d added, %d removed, %d modified nodes; %d added, %d removed edges\n",
+				len(r.Drift.NodesAdded), len(r.Drift.NodesRemoved), len(r.Drift.NodesModified),
+				len(r.Drift.EdgesAdded), len(r.Drift.EdgesRemoved))
+		}
+	}
 }
 
 // --- graph ---

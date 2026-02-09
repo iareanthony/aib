@@ -17,6 +17,7 @@ func RegisterRoutes(mux *http.ServeMux, s *Server) {
 	mux.HandleFunc("GET /api/v1/certs/expiring", s.handleExpiringCerts)
 	mux.HandleFunc("GET /api/v1/stats", s.handleStats)
 	mux.HandleFunc("GET /api/v1/scans", s.handleScans)
+	mux.HandleFunc("GET /api/v1/scans/{id}/diff", s.handleScanDiff)
 	mux.HandleFunc("GET /api/v1/scan/status", s.handleScanStatus)
 
 	mux.HandleFunc("GET /api/v1/graph/analysis/cycles", s.handleCycles)

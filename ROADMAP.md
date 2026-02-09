@@ -41,19 +41,14 @@
 - [x] Config validation with multi-error reporting
 - [x] Comprehensive test coverage (graph 86%, server 63%, scanner 60%, terraform 66%)
 
+### v0.4.0 — CloudFormation & API Docs
+- [x] CloudFormation parser (AWS templates, ~40 resource types, DependsOn/Ref/GetAtt edges)
+- [x] OpenAPI 3.0.3 spec at `/api/v1/openapi.json`
+- [x] Swagger UI docs at `/api/docs`
+
 ---
 
 ## Planned
-
-### #6 — CloudFormation Parser
-Parse AWS CloudFormation templates (JSON/YAML) to discover resources and dependencies. Map CFN resource types (`AWS::EC2::Instance`, `AWS::RDS::DBInstance`, etc.) to existing asset types. Support nested stacks and cross-stack references.
-
-**Priority**: High — completes the major IaC trifecta (Terraform, K8s, CloudFormation).
-
-### #8 — OpenAPI Spec
-Generate and serve OpenAPI/Swagger documentation at `/api/docs`. Auto-generate from existing handler signatures and route registrations.
-
-**Priority**: Medium — improves API discoverability for integrations.
 
 ### #9 — Pulumi Support
 Parse Pulumi state files to discover infrastructure. Similar to Terraform state parsing but with Pulumi's state format and resource naming conventions.

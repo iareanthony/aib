@@ -45,6 +45,7 @@ type ScanResult struct {
 	EdgesFound int
 	Warnings   []string
 	Error      error
+	Drift      *graph.DriftSummary
 }
 
 // Scanner orchestrates infrastructure scans.
@@ -86,6 +87,12 @@ func (s *Scanner) RunSync(ctx context.Context, req ScanRequest) ScanResult {
 		return ScanResult{ScanID: scanID, Error: err}
 	}
 
+	// Compute drift before upserting (compares new vs existing state)
+	drift, driftErr := computeDrift(ctx, s.store, result, req.Source)
+	if driftErr != nil {
+		s.logger.Warn("failed to compute drift", "error", driftErr)
+	}
+
 	// Store all nodes first, then all edges
 	for _, n := range result.Nodes {
 		if err := s.store.UpsertNode(ctx, n); err != nil {
@@ -98,6 +105,13 @@ func (s *Scanner) RunSync(ctx context.Context, req ScanRequest) ScanResult {
 		}
 	}
 
+	// Persist drift summary
+	if drift != nil {
+		if err := s.store.StoreDiff(ctx, scanID, drift); err != nil {
+			s.logger.Warn("failed to store drift", "scanID", scanID, "error", err)
+		}
+	}
+
 	_ = s.store.UpdateScan(ctx, scanID, "completed", len(result.Nodes), len(result.Edges))
 
 	return ScanResult{
@@ -105,6 +119,7 @@ func (s *Scanner) RunSync(ctx context.Context, req ScanRequest) ScanResult {
 		NodesFound: len(result.Nodes),
 		EdgesFound: len(result.Edges),
 		Warnings:   result.Warnings,
+		Drift:      drift,
 	}
 }
 
@@ -161,6 +176,12 @@ func (s *Scanner) RunAsync(ctx context.Context, req ScanRequest) (int64, error) 
 			return
 		}
 
+		// Compute drift before upserting
+		drift, driftErr := computeDrift(asyncCtx, s.store, result, req.Source)
+		if driftErr != nil {
+			s.logger.Warn("failed to compute drift", "error", driftErr)
+		}
+
 		for _, n := range result.Nodes {
 			if err := s.store.UpsertNode(asyncCtx, n); err != nil {
 				s.logger.Warn("failed to store node", "id", n.ID, "error", err)
@@ -169,6 +190,13 @@ func (s *Scanner) RunAsync(ctx context.Context, req ScanRequest) (int64, error) 
 		for _, e := range result.Edges {
 			if err := s.store.UpsertEdge(asyncCtx, e); err != nil {
 				s.logger.Warn("failed to store edge", "id", e.ID, "error", err)
+			}
+		}
+
+		// Persist drift summary
+		if drift != nil {
+			if err := s.store.StoreDiff(asyncCtx, scanID, drift); err != nil {
+				s.logger.Warn("failed to store drift", "scanID", scanID, "error", err)
 			}
 		}
 

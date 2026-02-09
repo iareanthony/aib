@@ -488,6 +488,40 @@
         }
       }
     },
+    "/api/v1/scans/{id}/diff": {
+      "get": {
+        "summary": "Get scan drift",
+        "description": "Returns the drift summary for a specific scan, showing what changed compared to the previous state.",
+        "tags": ["Scans"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer" },
+            "description": "Scan ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Drift summary",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DriftSummary" }
+              }
+            }
+          },
+          "404": {
+            "description": "No diff found for this scan",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/scan/status": {
       "get": {
         "summary": "Scan status",
@@ -769,6 +803,61 @@
           "node": { "$ref": "#/components/schemas/Node" },
           "action": { "type": "string", "enum": ["create", "update", "delete", "replace"] },
           "blast_radius": { "type": "integer" }
+        }
+      },
+      "DriftSummary": {
+        "type": "object",
+        "properties": {
+          "nodes_added": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/NodeChange" }
+          },
+          "nodes_removed": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/NodeChange" }
+          },
+          "nodes_modified": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/NodeModification" }
+          },
+          "edges_added": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/EdgeChange" }
+          },
+          "edges_removed": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/EdgeChange" }
+          },
+          "is_initial": { "type": "boolean" }
+        }
+      },
+      "NodeChange": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "type": { "type": "string" }
+        }
+      },
+      "NodeModification": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "changes": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "List of changed fields, e.g. name, metadata.region"
+          }
+        }
+      },
+      "EdgeChange": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "from_id": { "type": "string" },
+          "to_id": { "type": "string" },
+          "type": { "type": "string" }
         }
       },
       "Error": {

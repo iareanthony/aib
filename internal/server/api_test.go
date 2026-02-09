@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -874,6 +875,70 @@ func TestTriggerScan_AllowedPaths_Blocked(t *testing.T) {
 
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestHandleScanDiff(t *testing.T) {
+	ts, store := newTestServer(t, "")
+	ctx := context.Background()
+
+	// Record a scan and store a drift summary
+	scanID, err := store.RecordScan(ctx, graph.Scan{
+		Source:     "terraform",
+		SourcePath: "/tmp/test.tfstate",
+		StartedAt:  time.Now(),
+		Status:     "completed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	diff := &graph.DriftSummary{
+		NodesAdded: []graph.NodeChange{
+			{ID: "tf:vm:new", Name: "new", Type: "vm"},
+		},
+		NodesRemoved: []graph.NodeChange{
+			{ID: "tf:db:old", Name: "old", Type: "database"},
+		},
+	}
+	if err := store.StoreDiff(ctx, scanID, diff); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(ts.URL + fmt.Sprintf("/api/v1/scans/%d/diff", scanID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // test cleanup
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200; body = %s", resp.StatusCode, body)
+	}
+
+	var got graph.DriftSummary
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.NodesAdded) != 1 {
+		t.Errorf("nodes_added = %d, want 1", len(got.NodesAdded))
+	}
+	if len(got.NodesRemoved) != 1 {
+		t.Errorf("nodes_removed = %d, want 1", len(got.NodesRemoved))
+	}
+}
+
+func TestHandleScanDiff_NotFound(t *testing.T) {
+	ts, _ := newTestServer(t, "")
+
+	resp, err := http.Get(ts.URL + "/api/v1/scans/99999/diff")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // test cleanup
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", resp.StatusCode)
 	}
 }
 

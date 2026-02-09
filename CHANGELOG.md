@@ -2,6 +2,17 @@
 
 All notable changes to AIB are documented here. See [GitHub Releases](https://github.com/matijazezelj/aib/releases) for download links.
 
+## [0.5.0] - 2026-02-09
+
+### Added
+- **Drift detection**: scan-time diffing compares parser output against current store state before upserting
+  - Detects added, removed, and modified nodes; added and removed edges
+  - Source-scoped: a terraform scan won't flag kubernetes nodes as removed
+  - Drift summary stored per scan in `scan_diffs` table (lightweight JSON)
+  - CLI output shows drift after each scan (added/removed/modified counts)
+  - API: `GET /api/v1/scans/{id}/diff` returns drift summary for a scan
+  - OpenAPI spec updated with DriftSummary schema and new endpoint
+
 ## [0.4.0] - 2026-02-08
 
 ### Added

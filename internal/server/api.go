@@ -442,6 +442,28 @@ func (s *Server) handleTriggerScan(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleScanDiff(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid scan ID")
+		return
+	}
+
+	diff, err := s.store.GetDiff(r.Context(), id)
+	if err != nil {
+		s.logger.Error("getting scan diff", "scanID", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if diff == nil {
+		writeError(w, http.StatusNotFound, "no diff found for this scan")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, diff)
+}
+
 func (s *Server) handleScanStatus(w http.ResponseWriter, r *http.Request) {
 	running := s.scanner != nil && s.scanner.IsRunning()
 	writeJSON(w, http.StatusOK, map[string]any{"running": running})

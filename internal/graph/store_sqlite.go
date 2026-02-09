@@ -54,6 +54,12 @@ CREATE TABLE IF NOT EXISTS scans (
     edges_found INTEGER DEFAULT 0,
     status      TEXT DEFAULT 'running'
 );
+
+CREATE TABLE IF NOT EXISTS scan_diffs (
+    scan_id    INTEGER PRIMARY KEY REFERENCES scans(id) ON DELETE CASCADE,
+    diff_json  TEXT NOT NULL,
+    is_initial BOOLEAN DEFAULT 0
+);
 `
 
 // SQLiteStore implements Store using SQLite.
@@ -496,6 +502,35 @@ func (s *SQLiteStore) FindOrphanNodes(ctx context.Context) ([]models.Node, error
 		nodes = append(nodes, *n)
 	}
 	return nodes, rows.Err()
+}
+
+// StoreDiff persists a drift summary for a scan.
+func (s *SQLiteStore) StoreDiff(ctx context.Context, scanID int64, summary *DriftSummary) error {
+	data, err := json.Marshal(summary)
+	if err != nil {
+		return fmt.Errorf("marshaling drift: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT OR REPLACE INTO scan_diffs (scan_id, diff_json, is_initial) VALUES (?, ?, ?)
+	`, scanID, string(data), summary.IsInitial)
+	return err
+}
+
+// GetDiff retrieves the drift summary for a scan. Returns nil if not found.
+func (s *SQLiteStore) GetDiff(ctx context.Context, scanID int64) (*DriftSummary, error) {
+	var diffJSON string
+	err := s.db.QueryRowContext(ctx, `SELECT diff_json FROM scan_diffs WHERE scan_id = ?`, scanID).Scan(&diffJSON)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var summary DriftSummary
+	if err := json.Unmarshal([]byte(diffJSON), &summary); err != nil {
+		return nil, fmt.Errorf("unmarshaling drift: %w", err)
+	}
+	return &summary, nil
 }
 
 // GenerateEdgeID creates a deterministic edge ID.

@@ -440,6 +440,45 @@ Orphan Nodes (no connections)
 
 **Cycles** indicate circular dependencies that may cause deployment ordering issues. **Single points of failure** are nodes with the highest blast radius — if they fail, many other nodes are affected. **Orphans** are nodes with zero edges, which may indicate stale or misconfigured resources.
 
+### Drift Detection
+
+Every scan automatically compares the parsed results against the current database state and reports what changed. This runs transparently — no extra flags or configuration needed:
+
+```
+$ aib scan cloudformation template.yaml
+Scanning CloudFormation templates across 1 path(s)...
+Discovered 5 nodes, 5 edges
+Drift: (initial scan — all assets are new)
+
+$ aib scan cloudformation template.yaml
+Scanning CloudFormation templates across 1 path(s)...
+Discovered 5 nodes, 5 edges
+No drift detected
+
+$ aib scan cloudformation template_v2.yaml
+Scanning CloudFormation templates across 1 path(s)...
+Discovered 5 nodes, 5 edges
+Drift: 1 added, 1 removed, 1 modified nodes; 1 added, 0 removed edges
+```
+
+Drift is **source-scoped**: a Terraform scan only compares against existing Terraform nodes, so it won't flag Kubernetes resources as removed. Drift summaries are stored per scan and accessible via the API:
+
+```bash
+# Get drift details for a specific scan
+curl http://localhost:8080/api/v1/scans/3/diff
+```
+
+```json
+{
+  "nodes_added": [{"id": "cfn:database:MyDatabase", "name": "MyDatabase", "type": "database"}],
+  "nodes_removed": [{"id": "cfn:bucket:MyBucket", "name": "MyBucket", "type": "bucket"}],
+  "nodes_modified": [{"id": "cfn:vm:MyInstance", "name": "MyInstance", "changes": ["metadata.InstanceType"]}],
+  "edges_added": [{"id": "cfn:database:MyDatabase->depends_on->cfn:firewall_rule:MySecurityGroup", ...}],
+  "edges_removed": [{"id": "cfn:vm:MyInstance->depends_on->cfn:bucket:MyBucket", ...}],
+  "is_initial": false
+}
+```
+
 ### Certificate Management
 
 Probe a TLS endpoint and track the certificate:
@@ -554,6 +593,7 @@ Authentication applies to `/api/*` routes only. The web UI, static assets, and `
 | `GET` | `/api/v1/certs/expiring` | Expiring certs (`?days=30`) |
 | `GET` | `/api/v1/stats` | Summary statistics |
 | `GET` | `/api/v1/scans` | Scan history |
+| `GET` | `/api/v1/scans/:id/diff` | Drift summary for a scan |
 | `GET` | `/api/v1/scan/status` | Check if a scan is running |
 | `POST` | `/api/v1/scan` | Trigger a scan |
 | `GET` | `/api/v1/openapi.json` | OpenAPI 3.0 specification |
