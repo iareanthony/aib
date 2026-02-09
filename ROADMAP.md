@@ -63,6 +63,12 @@
 - [x] CLI: `aib scan pulumi <path> [path...]`
 - [x] API: `POST /api/v1/scan` accepts `"pulumi"` source
 
+### v0.7.0 — Slack Alerting
+- [x] Slack alerter with Block Kit formatted messages (severity colors, emojis, asset details, blast radius)
+- [x] Configurable channel override and HTTPS-only webhook URL validation
+- [x] Extracted `buildAlerters()` helper to DRY up CLI alerter wiring
+- [x] Updated Go version requirement to 1.25.7+
+
 ---
 
 ## Planned
@@ -82,7 +88,7 @@ Extend `extractMetadata` to handle provider-specific field names:
 
 ### Stretch Goals
 - **Graph diff visualization** in the web UI (side-by-side or overlay)
-- **Slack/Teams alerting** backends (in addition to webhooks)
+- ~~**Slack/Teams alerting** backends (in addition to webhooks)~~ Slack done in v0.7.0; Teams still possible
 - **Policy engine** — define rules like "no orphan nodes in production" or "max blast radius < 10"
 - **Multi-tenant support** — separate graphs per team/environment with RBAC
 - **Terraform Cloud/Enterprise integration** — pull state directly from TFC API

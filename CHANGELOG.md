@@ -2,6 +2,21 @@
 
 All notable changes to AIB are documented here. See [GitHub Releases](https://github.com/matijazezelj/aib/releases) for download links.
 
+## [0.7.0] - 2026-02-09
+
+### Added
+- **Slack alerter**: dedicated Slack incoming webhook integration for certificate expiry notifications
+  - Block Kit formatted messages with severity-colored sidebar (red/yellow/green)
+  - Asset details (name, type, ID, expiry), message body, and optional blast radius info
+  - Configurable channel override (`alerts.slack.channel`)
+  - HTTPS-only webhook URL validation
+  - Environment variable expansion for webhook URL (`${AIB_SLACK_WEBHOOK_URL}`)
+  - Config: `alerts.slack.enabled`, `alerts.slack.webhook_url`, `alerts.slack.channel`
+
+### Improved
+- Extracted `buildAlerters()` helper in CLI to DRY up duplicated alerter wiring (cert check + serve commands)
+- Updated Go version requirement from 1.22+ to 1.25.7+ in README
+
 ## [0.6.0] - 2026-02-09
 
 ### Added
