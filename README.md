@@ -11,7 +11,7 @@ Part of the "in a box" security toolbox alongside [SIB](https://github.com/matij
 ## Quick Start
 
 ```bash
-# Build from source (requires Go 1.22+)
+# Build from source (requires Go 1.25.7+)
 git clone https://github.com/matijazezelj/aib.git && cd aib && make build
 
 # Or install directly
@@ -169,7 +169,7 @@ aib certs expiring --days=30               # expiring within threshold
 aib certs check                            # re-probe all known endpoints
 ```
 
-When running `aib serve`, certificates are probed automatically on a schedule (configurable via `certs.probe_interval`).
+When running `aib serve`, certificates are probed automatically on a schedule (configurable via `certs.probe_interval`). Expiry alerts can be sent to stdout, a generic webhook (e.g. SIB), or Slack (Block Kit formatted messages with severity colors and blast radius details).
 
 ## Web UI & API
 
@@ -258,6 +258,10 @@ alerts:
       Authorization: "Bearer ${AIB_WEBHOOK_TOKEN}"
   stdout:
     enabled: true
+  slack:
+    enabled: false
+    webhook_url: "https://hooks.slack.com/services/T.../B.../xxx"
+    channel: ""
 
 server:
   listen: ":8080"

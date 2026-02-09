@@ -34,6 +34,21 @@ type cliApp struct {
 	in                                   io.Reader // os.Stdin in prod (for prune/backup confirmation)
 }
 
+// buildAlerters creates the configured alert backends from config.
+func (a *cliApp) buildAlerters(cfg *config.Config) []alert.Alerter {
+	var alerters []alert.Alerter
+	if cfg.Alerts.Stdout.Enabled {
+		alerters = append(alerters, alert.NewStdoutAlerter())
+	}
+	if cfg.Alerts.Webhook.Enabled && cfg.Alerts.Webhook.URL != "" {
+		alerters = append(alerters, alert.NewWebhookAlerter(cfg.Alerts.Webhook.URL, cfg.Alerts.Webhook.Headers))
+	}
+	if cfg.Alerts.Slack.Enabled && cfg.Alerts.Slack.WebhookURL != "" {
+		alerters = append(alerters, alert.NewSlackAlerter(cfg.Alerts.Slack.WebhookURL, cfg.Alerts.Slack.Channel))
+	}
+	return alerters
+}
+
 func main() {
 	app := &cliApp{
 		version: version,
@@ -1201,14 +1216,7 @@ func (a *cliApp) certsCheckCmd() *cobra.Command {
 			results := certs.ProbeAll(ctx, tracker, store, a.logger)
 
 			// Send alerts for expiring certs
-			var alerters []alert.Alerter
-			if cfg.Alerts.Stdout.Enabled {
-				alerters = append(alerters, alert.NewStdoutAlerter())
-			}
-			if cfg.Alerts.Webhook.Enabled && cfg.Alerts.Webhook.URL != "" {
-				alerters = append(alerters, alert.NewWebhookAlerter(cfg.Alerts.Webhook.URL, cfg.Alerts.Webhook.Headers))
-			}
-			multi := alert.NewMulti(alerters...)
+			multi := alert.NewMulti(a.buildAlerters(cfg)...)
 
 			for _, ci := range results {
 				if ci.Status == "warning" || ci.Status == "critical" || ci.Status == "expired" {
@@ -1281,14 +1289,7 @@ func (a *cliApp) serveCmd() *cobra.Command {
 
 			// Scheduled cert probing
 			if cfg.Certs.ProbeEnabled && cfg.Certs.ProbeInterval != "" {
-				var alerters []alert.Alerter
-				if cfg.Alerts.Stdout.Enabled {
-					alerters = append(alerters, alert.NewStdoutAlerter())
-				}
-				if cfg.Alerts.Webhook.Enabled && cfg.Alerts.Webhook.URL != "" {
-					alerters = append(alerters, alert.NewWebhookAlerter(cfg.Alerts.Webhook.URL, cfg.Alerts.Webhook.Headers))
-				}
-				certSched, err := certs.NewCertScheduler(tracker, store, alert.NewMulti(alerters...), cfg.Certs.ProbeInterval, a.logger)
+				certSched, err := certs.NewCertScheduler(tracker, store, alert.NewMulti(a.buildAlerters(cfg)...), cfg.Certs.ProbeInterval, a.logger)
 				if err != nil {
 					a.logger.Error("invalid cert probe interval", "error", err)
 				} else {

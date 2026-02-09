@@ -345,6 +345,32 @@ func TestValidate_AllowedPaths_Relative(t *testing.T) {
 	}
 }
 
+func TestValidate_InvalidSlackWebhookURL(t *testing.T) {
+	cfg, _ := loadDefaults()
+	cfg.Alerts.Slack.Enabled = true
+	cfg.Alerts.Slack.WebhookURL = "http://hooks.slack.com/services/T/B/x"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for HTTP slack webhook URL")
+	}
+	if !strings.Contains(err.Error(), "alerts.slack.webhook_url") {
+		t.Errorf("error should mention alerts.slack.webhook_url, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "https") {
+		t.Errorf("error should mention https, got: %v", err)
+	}
+}
+
+func TestValidate_ValidSlackConfig(t *testing.T) {
+	cfg, _ := loadDefaults()
+	cfg.Alerts.Slack.Enabled = true
+	cfg.Alerts.Slack.WebhookURL = "https://hooks.slack.com/services/T/B/x"
+	cfg.Alerts.Slack.Channel = "#alerts"
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("valid slack config should pass, got: %v", err)
+	}
+}
+
 // loadDefaults creates a Config with viper defaults without reading a file.
 func loadDefaults() (*Config, error) {
 	return &Config{

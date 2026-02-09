@@ -92,10 +92,11 @@ type CertsConfig struct {
 	AlertThresholds []int  `mapstructure:"alert_thresholds"`
 }
 
-// AlertsConfig configures alert backends (webhook and stdout).
+// AlertsConfig configures alert backends (webhook, stdout, and slack).
 type AlertsConfig struct {
 	Webhook WebhookConfig `mapstructure:"webhook"`
 	Stdout  StdoutConfig  `mapstructure:"stdout"`
+	Slack   SlackConfig   `mapstructure:"slack"`
 }
 
 // WebhookConfig configures the webhook alert backend.
@@ -108,6 +109,13 @@ type WebhookConfig struct {
 // StdoutConfig configures the stdout alert backend.
 type StdoutConfig struct {
 	Enabled bool `mapstructure:"enabled"`
+}
+
+// SlackConfig configures the Slack alert backend.
+type SlackConfig struct {
+	Enabled    bool   `mapstructure:"enabled"`
+	WebhookURL string `mapstructure:"webhook_url"`
+	Channel    string `mapstructure:"channel"`
 }
 
 // ServerConfig configures the HTTP server, API auth, and CORS.
@@ -169,6 +177,7 @@ func Load(cfgFile string) (*Config, error) {
 	cfg.Storage.Memgraph.Password = os.ExpandEnv(cfg.Storage.Memgraph.Password)
 	cfg.Storage.Memgraph.Username = os.ExpandEnv(cfg.Storage.Memgraph.Username)
 	cfg.Alerts.Webhook.URL = os.ExpandEnv(cfg.Alerts.Webhook.URL)
+	cfg.Alerts.Slack.WebhookURL = os.ExpandEnv(cfg.Alerts.Slack.WebhookURL)
 	cfg.Server.APIToken = os.ExpandEnv(cfg.Server.APIToken)
 	for k, v := range cfg.Alerts.Webhook.Headers {
 		cfg.Alerts.Webhook.Headers[k] = os.ExpandEnv(v)
@@ -224,6 +233,15 @@ func (c *Config) Validate() error {
 			errs = append(errs, fmt.Errorf("alerts.webhook.url is not a valid URL: %w", err))
 		} else if u.Scheme != "http" && u.Scheme != "https" {
 			errs = append(errs, fmt.Errorf("alerts.webhook.url must use http or https scheme, got %q", u.Scheme))
+		}
+	}
+
+	if c.Alerts.Slack.Enabled && c.Alerts.Slack.WebhookURL != "" {
+		u, err := url.Parse(c.Alerts.Slack.WebhookURL)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("alerts.slack.webhook_url is not a valid URL: %w", err))
+		} else if u.Scheme != "https" {
+			errs = append(errs, fmt.Errorf("alerts.slack.webhook_url must use https scheme, got %q", u.Scheme))
 		}
 	}
 
