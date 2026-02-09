@@ -777,7 +777,7 @@
         "properties": {
           "source": {
             "type": "string",
-            "enum": ["terraform", "terraform-plan", "kubernetes", "kubernetes-live", "ansible", "compose", "cloudformation", "all"],
+            "enum": ["terraform", "terraform-plan", "kubernetes", "kubernetes-live", "ansible", "compose", "cloudformation", "pulumi", "all"],
             "description": "Scan source type"
           },
           "paths": {

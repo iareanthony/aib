@@ -1,0 +1,43 @@
+{
+  "version": 3,
+  "deployment": {
+    "manifest": {
+      "time": "2024-01-15T11:00:00Z",
+      "magic": "test"
+    },
+    "resources": [
+      {
+        "urn": "urn:pulumi:dev::app::pulumi:pulumi:Stack::app-dev",
+        "type": "pulumi:pulumi:Stack",
+        "custom": false
+      },
+      {
+        "urn": "urn:pulumi:dev::app::aws:ec2/instance:Instance::app-server",
+        "type": "aws:ec2/instance:Instance",
+        "id": "i-app",
+        "custom": true,
+        "inputs": {
+          "instanceType": "t3.large",
+          "subnetId": "public-subnet",
+          "securityGroupIds": ["web-sg"]
+        },
+        "outputs": {"id": "i-app"},
+        "dependencies": [
+          "urn:pulumi:dev::myproject::aws:ec2/subnet:Subnet::public-subnet",
+          "urn:pulumi:dev::myproject::aws:ec2/securityGroup:SecurityGroup::web-sg"
+        ]
+      },
+      {
+        "urn": "urn:pulumi:dev::app::aws:lambda/function:Function::handler",
+        "type": "aws:lambda/function:Function",
+        "id": "handler",
+        "custom": true,
+        "inputs": {"name": "handler"},
+        "outputs": {"id": "handler"},
+        "dependencies": [
+          "urn:pulumi:dev::myproject::aws:s3/bucket:Bucket::data-bucket"
+        ]
+      }
+    ]
+  }
+}

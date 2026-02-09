@@ -1,0 +1,168 @@
+{
+  "version": 3,
+  "deployment": {
+    "manifest": {
+      "time": "2024-01-15T10:30:00Z",
+      "magic": "test"
+    },
+    "resources": [
+      {
+        "urn": "urn:pulumi:prod::infra::pulumi:pulumi:Stack::infra-prod",
+        "type": "pulumi:pulumi:Stack",
+        "custom": false
+      },
+      {
+        "urn": "urn:pulumi:prod::infra::pulumi:providers:aws::default",
+        "type": "pulumi:providers:aws",
+        "custom": true,
+        "inputs": {"region": "us-west-2"}
+      },
+      {
+        "urn": "urn:pulumi:prod::infra::pulumi:providers:gcp::default",
+        "type": "pulumi:providers:gcp",
+        "custom": true,
+        "inputs": {"project": "my-project"}
+      },
+      {
+        "urn": "urn:pulumi:prod::infra::aws:ec2/vpc:Vpc::prod-vpc",
+        "type": "aws:ec2/vpc:Vpc",
+        "id": "vpc-prod",
+        "custom": true,
+        "inputs": {"cidrBlock": "10.0.0.0/16", "tags": {"Name": "prod-vpc"}},
+        "outputs": {"id": "vpc-prod", "cidrBlock": "10.0.0.0/16"}
+      },
+      {
+        "urn": "urn:pulumi:prod::infra::aws:ec2/subnet:Subnet::prod-subnet-a",
+        "type": "aws:ec2/subnet:Subnet",
+        "id": "subnet-a",
+        "custom": true,
+        "inputs": {"vpcId": "prod-vpc", "cidrBlock": "10.0.1.0/24"},
+        "outputs": {"id": "subnet-a"},
+        "dependencies": ["urn:pulumi:prod::infra::aws:ec2/vpc:Vpc::prod-vpc"]
+      },
+      {
+        "urn": "urn:pulumi:prod::infra::aws:ec2/securityGroup:SecurityGroup::prod-sg",
+        "type": "aws:ec2/securityGroup:SecurityGroup",
+        "id": "sg-prod",
+        "custom": true,
+        "inputs": {"name": "prod-sg", "vpcId": "prod-vpc"},
+        "outputs": {"id": "sg-prod", "name": "prod-sg"},
+        "dependencies": ["urn:pulumi:prod::infra::aws:ec2/vpc:Vpc::prod-vpc"]
+      },
+      {
+        "urn": "urn:pulumi:prod::infra::aws:ec2/instance:Instance::api-server",
+        "type": "aws:ec2/instance:Instance",
+        "id": "i-api",
+        "custom": true,
+        "inputs": {
+          "instanceType": "m5.large",
+          "subnetId": "prod-subnet-a",
+          "securityGroupIds": ["prod-sg"],
+          "ami": "ami-prod"
+        },
+        "outputs": {"id": "i-api", "instanceType": "m5.large"},
+        "dependencies": [
+          "urn:pulumi:prod::infra::aws:ec2/subnet:Subnet::prod-subnet-a",
+          "urn:pulumi:prod::infra::aws:ec2/securityGroup:SecurityGroup::prod-sg"
+        ]
+      },
+      {
+        "urn": "urn:pulumi:prod::infra::aws:rds/instance:Instance::prod-db",
+        "type": "aws:rds/instance:Instance",
+        "id": "prod-db",
+        "custom": true,
+        "inputs": {"instanceType": "db.r5.large"},
+        "outputs": {"id": "prod-db", "arn": "arn:aws:rds:us-west-2:123:db:prod-db"}
+      },
+      {
+        "urn": "urn:pulumi:prod::infra::aws:s3/bucket:Bucket::prod-assets",
+        "type": "aws:s3/bucket:Bucket",
+        "id": "prod-assets-bucket",
+        "custom": true,
+        "inputs": {"bucket": "prod-assets-bucket"},
+        "outputs": {"id": "prod-assets-bucket", "region": "us-west-2"}
+      },
+      {
+        "urn": "urn:pulumi:prod::infra::aws:lambda/function:Function::processor",
+        "type": "aws:lambda/function:Function",
+        "id": "processor",
+        "custom": true,
+        "inputs": {"name": "processor"},
+        "outputs": {"id": "processor", "arn": "arn:aws:lambda:us-west-2:123:function:processor"}
+      },
+      {
+        "urn": "urn:pulumi:prod::infra::aws:iam/role:Role::lambda-role",
+        "type": "aws:iam/role:Role",
+        "id": "lambda-role",
+        "custom": true,
+        "inputs": {"name": "lambda-role"},
+        "outputs": {"id": "lambda-role", "arn": "arn:aws:iam::123:role/lambda-role"}
+      },
+      {
+        "urn": "urn:pulumi:prod::infra::aws:sqs/queue:Queue::task-queue",
+        "type": "aws:sqs/queue:Queue",
+        "id": "task-queue",
+        "custom": true,
+        "inputs": {"name": "task-queue"},
+        "outputs": {"id": "task-queue", "arn": "arn:aws:sqs:us-west-2:123:task-queue"}
+      },
+      {
+        "urn": "urn:pulumi:prod::infra::gcp:compute/instance:Instance::gcp-worker",
+        "type": "gcp:compute/instance:Instance",
+        "id": "gcp-worker",
+        "custom": true,
+        "inputs": {"machineType": "n1-standard-4", "zone": "us-central1-a", "labels": {"team": "backend"}},
+        "outputs": {"id": "gcp-worker", "machineType": "n1-standard-4", "selfLink": "projects/my-project/zones/us-central1-a/instances/gcp-worker"}
+      },
+      {
+        "urn": "urn:pulumi:prod::infra::gcp:compute/network:Network::gcp-network",
+        "type": "gcp:compute/network:Network",
+        "id": "gcp-network",
+        "custom": true,
+        "inputs": {"name": "gcp-network"},
+        "outputs": {"id": "gcp-network", "selfLink": "projects/my-project/global/networks/gcp-network"}
+      },
+      {
+        "urn": "urn:pulumi:prod::infra::gcp:storage/bucket:Bucket::gcp-data",
+        "type": "gcp:storage/bucket:Bucket",
+        "id": "gcp-data-bucket",
+        "custom": true,
+        "inputs": {"name": "gcp-data-bucket", "location": "US", "labels": {"env": "prod"}},
+        "outputs": {"id": "gcp-data-bucket", "name": "gcp-data-bucket"}
+      },
+      {
+        "urn": "urn:pulumi:prod::infra::azure-native:compute:VirtualMachine::azure-vm",
+        "type": "azure-native:compute:VirtualMachine",
+        "id": "azure-vm",
+        "custom": true,
+        "inputs": {"vmSize": "Standard_D2s_v3"},
+        "outputs": {"id": "azure-vm", "vmSize": "Standard_D2s_v3"}
+      },
+      {
+        "urn": "urn:pulumi:prod::infra::azure-native:network:VirtualNetwork::azure-vnet",
+        "type": "azure-native:network:VirtualNetwork",
+        "id": "azure-vnet",
+        "custom": true,
+        "inputs": {"name": "azure-vnet"},
+        "outputs": {"id": "azure-vnet"}
+      },
+      {
+        "urn": "urn:pulumi:prod::infra::aws:ec2/instance:Instance::deleted-server",
+        "type": "aws:ec2/instance:Instance",
+        "id": "i-deleted",
+        "custom": true,
+        "delete": true,
+        "inputs": {"instanceType": "t3.small"},
+        "outputs": {"id": "i-deleted"}
+      },
+      {
+        "urn": "urn:pulumi:prod::infra::custom:MyCustomResource::custom-thing",
+        "type": "custom:MyCustomResource",
+        "id": "custom-thing",
+        "custom": true,
+        "inputs": {"name": "custom-thing"},
+        "outputs": {"id": "custom-thing"}
+      }
+    ]
+  }
+}

@@ -15,6 +15,7 @@ import (
 	"github.com/matijazezelj/aib/internal/parser/cloudformation"
 	"github.com/matijazezelj/aib/internal/parser/compose"
 	"github.com/matijazezelj/aib/internal/parser/kubernetes"
+	"github.com/matijazezelj/aib/internal/parser/pulumi"
 	"github.com/matijazezelj/aib/internal/parser/terraform"
 )
 
@@ -283,6 +284,17 @@ func (s *Scanner) RunAllConfigured(ctx context.Context) []ScanResult {
 		results = append(results, r)
 	}
 
+	for _, src := range s.cfg.Sources.Pulumi {
+		if src.Path == "" {
+			continue
+		}
+		r := s.RunSync(ctx, ScanRequest{
+			Source: "pulumi",
+			Paths:  []string{src.Path},
+		})
+		results = append(results, r)
+	}
+
 	return results
 }
 
@@ -310,6 +322,8 @@ func (s *Scanner) executeScan(ctx context.Context, req ScanRequest) (*parser.Par
 		return s.scanTerraformPlan(ctx, req)
 	case "cloudformation":
 		return s.scanCloudFormation(ctx, req)
+	case "pulumi":
+		return s.scanPulumi(ctx, req)
 	case "all":
 		// "all" is handled specially by RunAsync — it runs RunAllConfigured.
 		// If it reaches here via RunSync, just run all configured sources.
@@ -388,6 +402,11 @@ func (s *Scanner) scanTerraformPlan(ctx context.Context, req ScanRequest) (*pars
 
 func (s *Scanner) scanCloudFormation(ctx context.Context, req ScanRequest) (*parser.ParseResult, error) {
 	p := cloudformation.NewCFNParser()
+	return p.ParseMulti(ctx, req.Paths)
+}
+
+func (s *Scanner) scanPulumi(ctx context.Context, req ScanRequest) (*parser.ParseResult, error) {
+	p := pulumi.NewPulumiParser()
 	return p.ParseMulti(ctx, req.Paths)
 }
 

@@ -1,0 +1,120 @@
+{
+  "version": 3,
+  "deployment": {
+    "manifest": {
+      "time": "2024-01-15T10:30:00Z",
+      "magic": "test"
+    },
+    "resources": [
+      {
+        "urn": "urn:pulumi:dev::myproject::pulumi:pulumi:Stack::myproject-dev",
+        "type": "pulumi:pulumi:Stack",
+        "custom": false,
+        "inputs": {},
+        "outputs": {}
+      },
+      {
+        "urn": "urn:pulumi:dev::myproject::pulumi:providers:aws::default",
+        "type": "pulumi:providers:aws",
+        "custom": true,
+        "inputs": {"region": "us-east-1"},
+        "outputs": {"region": "us-east-1"}
+      },
+      {
+        "urn": "urn:pulumi:dev::myproject::aws:ec2/vpc:Vpc::main-vpc",
+        "type": "aws:ec2/vpc:Vpc",
+        "id": "vpc-0123456789abcdef0",
+        "custom": true,
+        "inputs": {
+          "cidrBlock": "10.0.0.0/16",
+          "tags": {"Name": "main-vpc", "env": "dev"}
+        },
+        "outputs": {
+          "id": "vpc-0123456789abcdef0",
+          "cidrBlock": "10.0.0.0/16",
+          "tags": {"Name": "main-vpc", "env": "dev"}
+        },
+        "parent": "urn:pulumi:dev::myproject::pulumi:pulumi:Stack::myproject-dev"
+      },
+      {
+        "urn": "urn:pulumi:dev::myproject::aws:ec2/subnet:Subnet::public-subnet",
+        "type": "aws:ec2/subnet:Subnet",
+        "id": "subnet-0123456789abcdef0",
+        "custom": true,
+        "inputs": {
+          "vpcId": "main-vpc",
+          "cidrBlock": "10.0.1.0/24",
+          "availabilityZone": "us-east-1a"
+        },
+        "outputs": {
+          "id": "subnet-0123456789abcdef0",
+          "vpcId": "vpc-0123456789abcdef0",
+          "cidrBlock": "10.0.1.0/24"
+        },
+        "parent": "urn:pulumi:dev::myproject::pulumi:pulumi:Stack::myproject-dev",
+        "dependencies": [
+          "urn:pulumi:dev::myproject::aws:ec2/vpc:Vpc::main-vpc"
+        ]
+      },
+      {
+        "urn": "urn:pulumi:dev::myproject::aws:ec2/securityGroup:SecurityGroup::web-sg",
+        "type": "aws:ec2/securityGroup:SecurityGroup",
+        "id": "sg-0123456789abcdef0",
+        "custom": true,
+        "inputs": {
+          "name": "web-sg",
+          "vpcId": "main-vpc"
+        },
+        "outputs": {
+          "id": "sg-0123456789abcdef0",
+          "name": "web-sg",
+          "vpcId": "vpc-0123456789abcdef0"
+        },
+        "parent": "urn:pulumi:dev::myproject::pulumi:pulumi:Stack::myproject-dev",
+        "dependencies": [
+          "urn:pulumi:dev::myproject::aws:ec2/vpc:Vpc::main-vpc"
+        ]
+      },
+      {
+        "urn": "urn:pulumi:dev::myproject::aws:ec2/instance:Instance::web-server",
+        "type": "aws:ec2/instance:Instance",
+        "id": "i-0123456789abcdef0",
+        "custom": true,
+        "inputs": {
+          "instanceType": "t3.medium",
+          "subnetId": "public-subnet",
+          "securityGroupIds": ["web-sg"],
+          "ami": "ami-0123456789abcdef0",
+          "tags": {"Name": "web-server"}
+        },
+        "outputs": {
+          "id": "i-0123456789abcdef0",
+          "instanceType": "t3.medium",
+          "publicIp": "54.1.2.3"
+        },
+        "parent": "urn:pulumi:dev::myproject::pulumi:pulumi:Stack::myproject-dev",
+        "dependencies": [
+          "urn:pulumi:dev::myproject::aws:ec2/subnet:Subnet::public-subnet",
+          "urn:pulumi:dev::myproject::aws:ec2/securityGroup:SecurityGroup::web-sg"
+        ]
+      },
+      {
+        "urn": "urn:pulumi:dev::myproject::aws:s3/bucket:Bucket::data-bucket",
+        "type": "aws:s3/bucket:Bucket",
+        "id": "data-bucket-abc123",
+        "custom": true,
+        "inputs": {
+          "bucket": "data-bucket-abc123",
+          "tags": {"env": "dev"}
+        },
+        "outputs": {
+          "id": "data-bucket-abc123",
+          "bucket": "data-bucket-abc123",
+          "arn": "arn:aws:s3:::data-bucket-abc123",
+          "region": "us-east-1"
+        },
+        "parent": "urn:pulumi:dev::myproject::pulumi:pulumi:Stack::myproject-dev"
+      }
+    ]
+  }
+}

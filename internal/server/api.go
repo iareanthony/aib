@@ -369,11 +369,12 @@ func (s *Server) handleTriggerScan(w http.ResponseWriter, r *http.Request) {
 
 	validSources := map[string]bool{
 		"terraform": true, "terraform-plan": true, "kubernetes": true,
-		"kubernetes-live": true, "ansible": true, "compose": true, "all": true,
+		"kubernetes-live": true, "ansible": true, "compose": true,
+		"cloudformation": true, "pulumi": true, "all": true,
 	}
 	if !validSources[req.Source] {
 		writeError(w, http.StatusBadRequest,
-			"source must be one of: terraform, kubernetes, kubernetes-live, ansible, compose, all")
+			"source must be one of: terraform, terraform-plan, kubernetes, kubernetes-live, ansible, compose, cloudformation, pulumi, all")
 		return
 	}
 

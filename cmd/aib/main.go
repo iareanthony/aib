@@ -145,6 +145,7 @@ func scanCmd() *cobra.Command {
 	cmd.AddCommand(scanK8sCmd())
 	cmd.AddCommand(scanComposeCmd())
 	cmd.AddCommand(scanCloudFormationCmd())
+	cmd.AddCommand(scanPulumiCmd())
 	return cmd
 }
 
@@ -341,6 +342,31 @@ func scanCloudFormationCmd() *cobra.Command {
 			sc := scanner.New(store, cfg, logger)
 			r := sc.RunSync(cmd.Context(), scanner.ScanRequest{
 				Source: "cloudformation",
+				Paths:  args,
+			})
+			printScanResult(r)
+			if r.Error != nil {
+				return r.Error
+			}
+			return nil
+		},
+	}
+}
+
+func scanPulumiCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "pulumi <path> [path...]",
+		Short: "Scan Pulumi stack export files for resource dependencies",
+		Long:  "Parses output of 'pulumi stack export' to discover infrastructure resources and their relationships.",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			store, cfg := openStore()
+			defer store.Close() //nolint:errcheck // best-effort cleanup
+
+			fmt.Printf("Scanning Pulumi state across %d path(s)...\n", len(args))
+			sc := scanner.New(store, cfg, logger)
+			r := sc.RunSync(cmd.Context(), scanner.ScanRequest{
+				Source: "pulumi",
 				Paths:  args,
 			})
 			printScanResult(r)

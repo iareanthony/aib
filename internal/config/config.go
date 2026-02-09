@@ -44,6 +44,7 @@ type SourcesConfig struct {
 	Ansible        []AnsibleSource        `mapstructure:"ansible"`
 	Compose        []ComposeSource        `mapstructure:"compose"`
 	CloudFormation []CloudFormationSource `mapstructure:"cloudformation"`
+	Pulumi         []PulumiSource         `mapstructure:"pulumi"`
 }
 
 // ComposeSource configures a Docker Compose file or directory to scan.
@@ -53,6 +54,11 @@ type ComposeSource struct {
 
 // CloudFormationSource configures a CloudFormation template file or directory to scan.
 type CloudFormationSource struct {
+	Path string `mapstructure:"path"`
+}
+
+// PulumiSource configures a Pulumi state file or directory to scan.
+type PulumiSource struct {
 	Path string `mapstructure:"path"`
 }
 

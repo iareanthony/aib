@@ -46,19 +46,26 @@
 - [x] OpenAPI 3.0.3 spec at `/api/v1/openapi.json`
 - [x] Swagger UI docs at `/api/docs`
 
+### v0.5.0 — Drift Detection
+- [x] Scan-time diffing: compares parser output against current store state before upserting
+- [x] Source-scoped comparison (terraform scan ignores kubernetes nodes)
+- [x] Detects added, removed, and modified nodes; added and removed edges
+- [x] Drift summary stored per scan in `scan_diffs` table (lightweight JSON)
+- [x] CLI output shows drift after each scan
+- [x] API: `GET /api/v1/scans/{id}/diff` returns drift summary
+
+### v0.6.0 — Pulumi Support
+- [x] Pulumi state parser (~80 resource types: AWS, GCP, Azure native + classic, Kubernetes, TLS)
+- [x] Edge creation from dependencies, attribute refs (vpcId, subnetId, securityGroupIds), parent URNs
+- [x] Metadata extraction (instanceType, machineType, vmSize, region, tags, labels, ARN, etc.)
+- [x] Two-phase cross-file edge resolution
+- [x] Config: `sources.pulumi[].path`
+- [x] CLI: `aib scan pulumi <path> [path...]`
+- [x] API: `POST /api/v1/scan` accepts `"pulumi"` source
+
 ---
 
 ## Planned
-
-### #9 — Pulumi Support
-Parse Pulumi state files to discover infrastructure. Similar to Terraform state parsing but with Pulumi's state format and resource naming conventions.
-
-**Priority**: Medium — growing Pulumi adoption in the ecosystem.
-
-### #10 — Diff / Drift Detection
-Compare two scans over time to detect infrastructure drift. Show added/removed/changed nodes and edges between scan snapshots. Useful for detecting unauthorized changes.
-
-**Priority**: Medium — high value for security posture monitoring.
 
 ### #11 — CLI Coverage Improvement
 Refactor `cmd/aib/main.go` to support dependency injection for `openStore()` / `os.Exit()`, enabling unit testing of command handlers without integration overhead. Current coverage is 9.7%.

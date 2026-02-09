@@ -2,6 +2,18 @@
 
 All notable changes to AIB are documented here. See [GitHub Releases](https://github.com/matijazezelj/aib/releases) for download links.
 
+## [0.6.0] - 2026-02-09
+
+### Added
+- **Pulumi parser**: scan Pulumi stack export files for infrastructure resource dependencies (`aib scan pulumi`)
+  - Supports ~80 resource types across AWS, GCP, Azure (native + classic), Kubernetes, and TLS providers
+  - Edge creation from dependencies array, attribute references (vpcId, subnetId, securityGroupIds), and parent URNs
+  - Metadata extraction: instanceType, machineType, vmSize, region, zone, tags, labels, ARN, and more
+  - Two-phase parsing with cross-file edge resolution (same pattern as Terraform/CloudFormation)
+  - Config file support: `sources.pulumi[].path`
+  - API: `POST /api/v1/scan` now accepts `"pulumi"` as a source
+  - Also added missing `"cloudformation"` to API scan trigger validation
+
 ## [0.5.0] - 2026-02-09
 
 ### Added
