@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "AIB - Assets in a Box",
-    "description": "REST API for infrastructure asset discovery, dependency mapping, and blast radius analysis.",
-    "version": "0.4.0",
+    "description": "REST API for infrastructure asset discovery, dependency mapping, and blast radius analysis.\n\nAll `/api/` endpoints are protected by bearer token authentication when `server.api_token` is configured, and rate-limited to 10 requests/second (burst 20) per client IP.",
+    "version": "1.0.0",
     "license": {
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0"
@@ -86,7 +86,9 @@
                 }
               }
             }
-          }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
@@ -105,7 +107,7 @@
           {
             "name": "source",
             "in": "query",
-            "description": "Filter by source (e.g. terraform, kubernetes, cloudformation)",
+            "description": "Filter by source (e.g. terraform, kubernetes, cloudformation, pulumi)",
             "schema": { "type": "string" }
           }
         ],
@@ -120,7 +122,9 @@
                 }
               }
             }
-          }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
@@ -146,6 +150,7 @@
               }
             }
           },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
           "404": {
             "description": "Node not found",
             "content": {
@@ -153,7 +158,8 @@
                 "schema": { "$ref": "#/components/schemas/Error" }
               }
             }
-          }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
@@ -181,7 +187,9 @@
                 }
               }
             }
-          }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
@@ -214,6 +222,7 @@
               }
             }
           },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
           "404": {
             "description": "Node not found",
             "content": {
@@ -221,7 +230,8 @@
                 "schema": { "$ref": "#/components/schemas/Error" }
               }
             }
-          }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
@@ -265,7 +275,9 @@
                 "schema": { "$ref": "#/components/schemas/Error" }
               }
             }
-          }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
@@ -301,6 +313,7 @@
               }
             }
           },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
           "404": {
             "description": "Node not found",
             "content": {
@@ -308,7 +321,8 @@
                 "schema": { "$ref": "#/components/schemas/Error" }
               }
             }
-          }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
@@ -331,7 +345,9 @@
                 }
               }
             }
-          }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
@@ -365,7 +381,9 @@
                 }
               }
             }
-          }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
@@ -385,7 +403,9 @@
                 }
               }
             }
-          }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
@@ -405,7 +425,9 @@
                 }
               }
             }
-          }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
@@ -433,7 +455,9 @@
                 }
               }
             }
-          }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
@@ -464,7 +488,9 @@
                 }
               }
             }
-          }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
@@ -484,7 +510,9 @@
                 }
               }
             }
-          }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
@@ -511,6 +539,7 @@
               }
             }
           },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
           "404": {
             "description": "No diff found for this scan",
             "content": {
@@ -518,7 +547,8 @@
                 "schema": { "$ref": "#/components/schemas/Error" }
               }
             }
-          }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
@@ -540,7 +570,9 @@
                 }
               }
             }
-          }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
@@ -580,21 +612,15 @@
               }
             }
           },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
-              }
-            }
-          }
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
     "/api/v1/export/json": {
       "get": {
         "summary": "Export as JSON",
-        "description": "Exports the full graph as a JSON document.",
+        "description": "Exports the full graph as a JSON document with Content-Disposition header for download.",
         "tags": ["Export"],
         "responses": {
           "200": {
@@ -616,7 +642,9 @@
                 }
               }
             }
-          }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
@@ -633,7 +661,9 @@
                 "schema": { "type": "string" }
               }
             }
-          }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
@@ -650,7 +680,9 @@
                 "schema": { "type": "string" }
               }
             }
-          }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
@@ -670,6 +702,44 @@
                 }
               }
             }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/api/v1/openapi.json": {
+      "get": {
+        "summary": "OpenAPI specification",
+        "description": "Returns this OpenAPI 3.0.3 specification document.",
+        "tags": ["Docs"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OpenAPI spec",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/docs": {
+      "get": {
+        "summary": "Swagger UI",
+        "description": "Interactive API documentation powered by Swagger UI.",
+        "tags": ["Docs"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "HTML page with Swagger UI",
+            "content": {
+              "text/html": {
+                "schema": { "type": "string" }
+              }
+            }
           }
         }
       }
@@ -680,7 +750,25 @@
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer",
-        "description": "API token passed as Bearer token. Required for write operations."
+        "description": "API token passed as Bearer token. Required when server.api_token is configured."
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Missing or invalid bearer token",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "Rate limit exceeded (10 req/s, burst 20 per IP)",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" }
+          }
+        }
       }
     },
     "schemas": {

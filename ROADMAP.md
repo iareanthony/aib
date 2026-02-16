@@ -73,10 +73,10 @@
 
 ## Planned
 
-### #11 — CLI Coverage Improvement
-Refactor `cmd/aib/main.go` to support dependency injection for `openStore()` / `os.Exit()`, enabling unit testing of command handlers without integration overhead. Current coverage is 9.7%.
+### #11 — CLI Coverage Improvement ✅
+Refactored `cmd/aib/main.go` with `cliApp` struct for dependency injection (`openStore()` returns errors instead of `os.Exit()`, output via `io.Writer`). Coverage improved from 9.7% to 54%.
 
-**Priority**: Low — mostly ceremony, existing integration tests cover the important paths.
+**Status**: Done — remaining gaps are edge cases in command wiring.
 
 ### #12 — Enhanced Metadata Extraction
 Extend `extractMetadata` to handle provider-specific field names:
