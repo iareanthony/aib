@@ -69,16 +69,28 @@
 - [x] Extracted `buildAlerters()` helper to DRY up CLI alerter wiring
 - [x] Updated Go version requirement to 1.25.7+
 
+### v1.0.0 — Stable Release
+- [x] OpenAPI spec synced to v1.0.0 with 401/429 error responses on all endpoints
+- [x] Dockerfile updated to Go 1.25 + Alpine 3.21
+- [x] CLI coverage improvement completed (9.7% → 54% via cliApp DI refactor)
+- [x] CHANGELOG, SECURITY, and ROADMAP updated for v1.0
+
 ---
 
-## Planned
+## Known Limitations
 
-### #11 — CLI Coverage Improvement ✅
-Refactored `cmd/aib/main.go` with `cliApp` struct for dependency injection (`openStore()` returns errors instead of `os.Exit()`, output via `io.Writer`). Coverage improved from 9.7% to 54%.
+- **Single-instance only**: no clustering, sharding, or replication — suitable for up to ~10K assets
+- **No TLS on serve**: `aib serve` binds plain HTTP; use a reverse proxy (nginx, Caddy) for HTTPS
+- **No RBAC**: a single API token grants full access; no per-user or per-team permissions
+- **Memgraph optional**: SQLite handles all queries via local BFS; Memgraph accelerates large graphs but is not required
+- **Parser coverage is partial**: Terraform covers 100+ types but not all providers; Pulumi ~80 types; CloudFormation ~40 types
+- **No audit logging**: API access is not logged beyond standard HTTP request logs
 
-**Status**: Done — remaining gaps are edge cases in command wiring.
+---
 
-### #12 — Enhanced Metadata Extraction
+## Post-v1.0
+
+### Enhanced Metadata Extraction
 Extend `extractMetadata` to handle provider-specific field names:
 - AWS RDS `instance_class` (currently only `instance_type` is extracted)
 - Azure `sku` fields
@@ -86,9 +98,9 @@ Extend `extractMetadata` to handle provider-specific field names:
 
 **Priority**: Low — cosmetic improvement, doesn't affect graph structure.
 
-### Stretch Goals
-- **Graph diff visualization** in the web UI (side-by-side or overlay)
-- ~~**Slack/Teams alerting** backends (in addition to webhooks)~~ Slack done in v0.7.0; Teams still possible
+### Future Ideas
+- **Teams alerter** — Microsoft Teams webhook integration (Slack done in v0.7.0)
+- **Graph diff visualization** — side-by-side or overlay in the web UI
 - **Policy engine** — define rules like "no orphan nodes in production" or "max blast radius < 10"
 - **Multi-tenant support** — separate graphs per team/environment with RBAC
 - **Terraform Cloud/Enterprise integration** — pull state directly from TFC API

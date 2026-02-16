@@ -3,6 +3,7 @@ bin/
 data/
 *.db
 .env
+coverage*.out
 
 # IDE / editor
 .idea/

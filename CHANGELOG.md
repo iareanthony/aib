@@ -2,6 +2,18 @@
 
 All notable changes to AIB are documented here. See [GitHub Releases](https://github.com/matijazezelj/aib/releases) for download links.
 
+## [1.0.0] - 2026-02-16
+
+### Added
+- **v1.0 stable release**: AIB is production-ready for single-instance infrastructure mapping
+- OpenAPI spec updated to 1.0.0 with 401/429 error responses on all API endpoints
+- Documented `/api/v1/openapi.json` and `/api/docs` routes in OpenAPI spec
+- Rate limiting and authentication behavior documented in API spec description
+
+### Improved
+- Dockerfile updated to Go 1.25 + Alpine 3.21 (matches go.mod 1.25.7+ requirement)
+- ROADMAP: marked CLI coverage improvement (#11) as completed (54% via cliApp DI refactor)
+
 ## [0.7.0] - 2026-02-09
 
 ### Added

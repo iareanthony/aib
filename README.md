@@ -298,6 +298,14 @@ aib graph sync
 
 Writes go to both SQLite and Memgraph via the `SyncedStore` decorator. Memgraph can be rebuilt at any time with `aib graph sync`. The `deploy/docker-compose.yml` includes both AIB and Memgraph pre-configured.
 
+## Known Limitations
+
+- **Single-instance**: no clustering or replication — suitable for up to ~10K assets
+- **No built-in TLS**: `aib serve` binds plain HTTP; use a reverse proxy for HTTPS in production
+- **Single API token**: no per-user RBAC; one token grants full API access
+- **Parser coverage is partial**: Terraform 100+ types, Pulumi ~80, CloudFormation ~40 — not all provider resources are mapped
+- **Designed for internal networks**: do not expose directly to the public internet without a reverse proxy and TLS
+
 ## Development
 
 ```bash
