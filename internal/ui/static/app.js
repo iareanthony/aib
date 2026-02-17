@@ -42,6 +42,8 @@ const ZOOM_LABEL_THRESHOLD = 0.6;
 
 let cy;
 let graphData;
+let auditData = null;
+let auditByNode = {};  // nodeId → { severity, findings[] }
 let privacyMode = localStorage.getItem('privacyMode') === 'true';
 let selectedNodeId = null;
 let disabledEdgeTypes = new Set();
@@ -710,11 +712,28 @@ async function copyTextToClipboard(text) {
 // --- Init ---
 
 async function init() {
-    const [gd, stats] = await Promise.all([
+    const [gd, stats, audit] = await Promise.all([
         fetchJSON(`${API}/graph`),
         fetchJSON(`${API}/stats`),
+        fetchJSON(`${API}/graph/analysis/audit`).catch(() => null),
     ]);
     graphData = gd;
+
+    // Index audit findings by node ID, keeping the worst severity per node
+    auditData = audit;
+    auditByNode = {};
+    if (audit && audit.findings) {
+        const sevOrder = { critical: 3, warning: 2, info: 1 };
+        for (const f of audit.findings) {
+            if (!auditByNode[f.resource_id]) {
+                auditByNode[f.resource_id] = { severity: f.severity, findings: [] };
+            }
+            auditByNode[f.resource_id].findings.push(f);
+            if ((sevOrder[f.severity] || 0) > (sevOrder[auditByNode[f.resource_id].severity] || 0)) {
+                auditByNode[f.resource_id].severity = f.severity;
+            }
+        }
+    }
 
     // Stats header
     document.getElementById('stat-nodes').textContent = stats.nodes_total || 0;
@@ -816,6 +835,14 @@ async function init() {
             {
                 selector: '.neighbor-highlight',
                 style: { 'border-color': '#58a6ff', 'border-width': 3 },
+            },
+            {
+                selector: 'node[securityRisk = "critical"]',
+                style: { 'border-color': '#da3633', 'border-width': 3.5 },
+            },
+            {
+                selector: 'node[securityRisk = "warning"]',
+                style: { 'border-color': '#d29922', 'border-width': 3 },
             },
             {
                 selector: '.dimmed',
@@ -1041,10 +1068,12 @@ function buildElements(data, groupBy) {
     const groups = new Set();
 
     (data.nodes || []).forEach(n => {
+        const audit = auditByNode[n.id];
         const nodeData = {
             id: n.id, label: n.name, assetType: n.type, type: n.type, source: n.source,
             provider: n.provider, expires_at: n.expires_at,
             namespace: (n.metadata && n.metadata.namespace) || '',
+            securityRisk: audit ? audit.severity : 'none',
         };
 
         if (groupBy) {
@@ -1468,7 +1497,22 @@ async function showDetail(nodeId) {
 
     document.getElementById('detail-name').textContent = `${displayName} (${nodeData.type})`;
 
-    let html = '<table class="meta-table">';
+    // Security findings banner
+    const nodeAudit = auditByNode[nodeId];
+    let html = '';
+    if (nodeAudit && nodeAudit.findings.length > 0) {
+        const worstSev = nodeAudit.severity;
+        const sevClass = worstSev === 'critical' ? 'security-banner-critical' : worstSev === 'warning' ? 'security-banner-warning' : 'security-banner-info';
+        html += `<div class="security-banner ${sevClass}">`;
+        html += `<strong>Security Findings (${nodeAudit.findings.length})</strong>`;
+        html += '<ul>';
+        for (const f of nodeAudit.findings) {
+            html += `<li><span class="badge badge-${f.severity === 'critical' ? 'critical' : f.severity === 'warning' ? 'warning' : 'ok'}">${esc(f.severity)}</span> ${esc(f.description)}</li>`;
+        }
+        html += '</ul></div>';
+    }
+
+    html += '<table class="meta-table">';
     html += `<tr><td>ID</td><td>${maskDetailValue('id', nodeData.id)}</td></tr>`;
     html += `<tr><td>Type</td><td>${esc(nodeData.type)}</td></tr>`;
     html += `<tr><td>Source</td><td>${esc(nodeData.source)}</td></tr>`;

@@ -289,10 +289,46 @@ func extractPulumiMetadata(res pulumiResource) map[string]string {
 		"instanceType", "machineType", "vmSize",
 		"ami", "image", "arn", "selfLink", "project",
 		"cidrBlock", "ipCidrRange",
+		"engine", "engineVersion", "dbName", "acl",
 	}
 	for _, key := range stringKeys {
 		if v, ok := merged[key].(string); ok && v != "" {
 			meta[key] = v
+		}
+	}
+
+	// Boolean security-relevant fields
+	boolKeys := []string{
+		"encrypted", "storageEncrypted", "publiclyAccessible",
+		"deletionProtection", "multiAz",
+	}
+	for _, key := range boolKeys {
+		switch v := merged[key].(type) {
+		case bool:
+			meta[key] = fmt.Sprintf("%t", v)
+		case string:
+			if v != "" {
+				meta[key] = v
+			}
+		}
+	}
+
+	// Ingress CIDR blocks (for security groups)
+	if rules, ok := merged["ingress"].([]any); ok {
+		var cidrs []string
+		for _, r := range rules {
+			if rule, ok := r.(map[string]any); ok {
+				if blocks, ok := rule["cidrBlocks"].([]any); ok {
+					for _, b := range blocks {
+						if s, ok := b.(string); ok {
+							cidrs = append(cidrs, s)
+						}
+					}
+				}
+			}
+		}
+		if len(cidrs) > 0 {
+			meta["ingress_cidrs"] = strings.Join(cidrs, ",")
 		}
 	}
 

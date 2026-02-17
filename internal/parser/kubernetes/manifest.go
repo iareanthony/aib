@@ -145,14 +145,27 @@ type k8sContainerSpec struct {
 	Containers     []k8sContainer `yaml:"containers"`
 	InitContainers []k8sContainer `yaml:"initContainers"`
 	Volumes        []k8sVolume    `yaml:"volumes"`
+	HostNetwork    bool           `yaml:"hostNetwork"`
+	HostPID        bool           `yaml:"hostPID"`
+	HostIPC        bool           `yaml:"hostIPC"`
+	ServiceAccountName string     `yaml:"serviceAccountName"`
+}
+
+type k8sSecurityContext struct {
+	Privileged               *bool `yaml:"privileged"`
+	RunAsNonRoot             *bool `yaml:"runAsNonRoot"`
+	ReadOnlyRootFilesystem   *bool `yaml:"readOnlyRootFilesystem"`
+	AllowPrivilegeEscalation *bool `yaml:"allowPrivilegeEscalation"`
+	RunAsUser                *int  `yaml:"runAsUser"`
 }
 
 type k8sContainer struct {
-	Name    string       `yaml:"name"`
-	Image   string       `yaml:"image"`
-	Ports   []k8sPort    `yaml:"ports"`
-	EnvFrom []k8sEnvFrom `yaml:"envFrom"`
-	Env     []k8sEnv     `yaml:"env"`
+	Name            string              `yaml:"name"`
+	Image           string              `yaml:"image"`
+	Ports           []k8sPort           `yaml:"ports"`
+	EnvFrom         []k8sEnvFrom        `yaml:"envFrom"`
+	Env             []k8sEnv            `yaml:"env"`
+	SecurityContext *k8sSecurityContext  `yaml:"securityContext"`
 }
 
 type k8sPort struct {
@@ -305,6 +318,43 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 			}
 			for k, v := range res.Metadata.Labels {
 				meta["label:"+k] = v
+			}
+
+			// Security context extraction
+			podSpec := res.Spec.Template.Spec
+			if podSpec.HostNetwork {
+				meta["security.host_network"] = "true"
+			}
+			if podSpec.HostPID {
+				meta["security.host_pid"] = "true"
+			}
+			if podSpec.HostIPC {
+				meta["security.host_ipc"] = "true"
+			}
+			if podSpec.ServiceAccountName != "" {
+				meta["service_account"] = podSpec.ServiceAccountName
+			}
+			allContainers := append(podSpec.Containers, podSpec.InitContainers...)
+			for _, c := range allContainers {
+				if c.SecurityContext != nil {
+					prefix := "security." + c.Name + "."
+					sc := c.SecurityContext
+					if sc.Privileged != nil && *sc.Privileged {
+						meta[prefix+"privileged"] = "true"
+					}
+					if sc.RunAsNonRoot != nil {
+						meta[prefix+"run_as_non_root"] = fmt.Sprintf("%t", *sc.RunAsNonRoot)
+					}
+					if sc.ReadOnlyRootFilesystem != nil {
+						meta[prefix+"read_only_root_fs"] = fmt.Sprintf("%t", *sc.ReadOnlyRootFilesystem)
+					}
+					if sc.AllowPrivilegeEscalation != nil {
+						meta[prefix+"allow_privilege_escalation"] = fmt.Sprintf("%t", *sc.AllowPrivilegeEscalation)
+					}
+					if sc.RunAsUser != nil {
+						meta[prefix+"run_as_user"] = fmt.Sprintf("%d", *sc.RunAsUser)
+					}
+				}
 			}
 
 			node := models.Node{

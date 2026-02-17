@@ -364,11 +364,51 @@ func extractCFNMetadata(res cfnResource) map[string]string {
 	stringKeys := []string{
 		"InstanceType", "CidrBlock", "Engine", "Runtime", "BucketName",
 		"FunctionName", "DBInstanceClass", "AvailabilityZone",
+		"EngineVersion", "DBName",
 	}
 	for _, key := range stringKeys {
 		if v, ok := props[key].(string); ok && v != "" {
 			meta[key] = v
 		}
+	}
+
+	// Boolean security-relevant fields
+	boolKeys := []string{
+		"PubliclyAccessible", "StorageEncrypted", "DeletionProtection",
+		"MultiAZ",
+	}
+	for _, key := range boolKeys {
+		switch v := props[key].(type) {
+		case bool:
+			meta[key] = fmt.Sprintf("%t", v)
+		case string:
+			if v != "" {
+				meta[key] = v
+			}
+		}
+	}
+
+	// Security group ingress CIDRs
+	if ingress, ok := props["SecurityGroupIngress"].([]any); ok {
+		var cidrs []string
+		for _, r := range ingress {
+			if rule, ok := r.(map[string]any); ok {
+				if cidr, ok := rule["CidrIp"].(string); ok && cidr != "" {
+					cidrs = append(cidrs, cidr)
+				}
+				if cidr, ok := rule["CidrIpv6"].(string); ok && cidr != "" {
+					cidrs = append(cidrs, cidr)
+				}
+			}
+		}
+		if len(cidrs) > 0 {
+			meta["ingress_cidrs"] = strings.Join(cidrs, ",")
+		}
+	}
+
+	// Access control (e.g. S3 ACL)
+	if acl, ok := props["AccessControl"].(string); ok && acl != "" {
+		meta["AccessControl"] = acl
 	}
 
 	// CFN tags: [{Key: k, Value: v}, ...]

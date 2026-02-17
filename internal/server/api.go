@@ -530,6 +530,16 @@ func (s *Server) handleOrphans(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
+	report, err := graph.RunAudit(r.Context(), s.store)
+	if err != nil {
+		s.logger.Error("running audit", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
 // planImpactNode represents a planned resource change with its blast radius.
 type planImpactNode struct {
 	ID            string         `json:"id"`

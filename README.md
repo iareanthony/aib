@@ -34,7 +34,7 @@ AIB supports 7 IaC parsers. All support multiple paths with automatic cross-file
 
 ### Terraform State
 
-Parses `.tfstate` files (100+ resource type mappings across AWS, GCP, Azure, Cloudflare, TLS). Edges come from `dependencies` arrays and attribute references (vpc_id, subnet_id, etc.). Dependency edges include `source=tfstate_dependency` and `reference` metadata; attribute edges include `via` and `raw_value`. Node IDs: `tf:<assetType>:<name>`.
+Parses `.tfstate` files (100+ resource type mappings across AWS, GCP, Azure, Cloudflare, TLS). Edges come from `dependencies` arrays and attribute references (vpc_id, subnet_id, etc.). Dependency edges include `source=tfstate_dependency` and `reference` metadata; attribute edges include `via` and `raw_value`. Security-relevant metadata is extracted automatically: `encrypted`, `storage_encrypted`, `publicly_accessible`, `deletion_protection`, `multi_az`, ingress/egress CIDRs for security groups, and S3 versioning/logging status. Node IDs: `tf:<assetType>:<name>`.
 
 ```bash
 aib scan terraform terraform.tfstate
@@ -58,7 +58,7 @@ aib scan terraform-plan infra-plan.json services-plan.json
 
 ### Kubernetes / Helm
 
-Scans YAML manifests or Helm charts. Discovers workloads, services, ingresses, secrets, configmaps and their relationships (label selector matching, TLS termination, volume mounts, envFrom refs).
+Scans YAML manifests or Helm charts. Discovers workloads, services, ingresses, secrets, configmaps and their relationships (label selector matching, TLS termination, volume mounts, envFrom refs). Security context metadata is extracted for each container: `privileged`, `runAsNonRoot`, `readOnlyRootFilesystem`, `allowPrivilegeEscalation`, `runAsUser`, plus pod-level `hostNetwork`, `hostPID`, `hostIPC`, and `serviceAccountName`.
 
 Also infers workload interconnectivity (`connects_to`) from application config values (for example service URLs/hosts found in env vars and ConfigMap values), so app-to-service dependencies are visible even when they are expressed only as runtime connection strings. Node IDs: `k8s:<assetType>:<namespace>/<name>`.
 
@@ -96,7 +96,7 @@ aib scan compose docker-compose.yml docker-compose.override.yml
 
 ### CloudFormation
 
-Parses AWS CloudFormation templates (YAML/JSON, ~40 resource type mappings). Edges from DependsOn, Ref, Fn::GetAtt, and property references (VpcId, SubnetId, SecurityGroupIds). Each edge includes `via` and `raw_value` metadata distinguishing DependsOn vs Ref provenance. Node IDs: `cfn:<assetType>:<logicalId>`.
+Parses AWS CloudFormation templates (YAML/JSON, ~40 resource type mappings). Edges from DependsOn, Ref, Fn::GetAtt, and property references (VpcId, SubnetId, SecurityGroupIds). Each edge includes `via` and `raw_value` metadata distinguishing DependsOn vs Ref provenance. Security metadata extracted: `PubliclyAccessible`, `StorageEncrypted`, `DeletionProtection`, `MultiAZ`, security group ingress CIDRs, and S3 `AccessControl`. Node IDs: `cfn:<assetType>:<logicalId>`.
 
 ```bash
 aib scan cloudformation template.yaml
@@ -105,7 +105,7 @@ aib scan cloudformation vpc.yaml compute.yaml database.json
 
 ### Pulumi
 
-Parses `pulumi stack export` JSON output (~80 resource type mappings across AWS, GCP, Azure, Kubernetes, TLS). Edges from dependency arrays, attribute references, and parent URNs. Attribute edges carry `via` and `raw_value` metadata (e.g. `via=vpcId`, `raw_value=vpc-abc123`). Node IDs: `plm:<assetType>:<name>`.
+Parses `pulumi stack export` JSON output (~80 resource type mappings across AWS, GCP, Azure, Kubernetes, TLS). Edges from dependency arrays, attribute references, and parent URNs. Attribute edges carry `via` and `raw_value` metadata (e.g. `via=vpcId`, `raw_value=vpc-abc123`). Security metadata extracted: `encrypted`, `storageEncrypted`, `publiclyAccessible`, `deletionProtection`, `multiAz`, and ingress CIDRs. Node IDs: `plm:<assetType>:<name>`.
 
 ```bash
 aib scan pulumi stack-export.json
@@ -141,7 +141,7 @@ aib -o json certs list | jq '.[] | select(.status == "critical")'
 aib -o json db stats | jq '{nodes: .total_nodes, edges: .total_edges}'
 ```
 
-Supported commands: `graph show`, `graph nodes`, `graph edges`, `graph neighbors`, `graph path`, `graph deps`, `graph cycles`, `graph spof`, `graph orphans`, `impact node`, `certs list`, `certs expiring`, `certs probe`, `db stats`, `version`.
+Supported commands: `graph show`, `graph nodes`, `graph edges`, `graph neighbors`, `graph path`, `graph deps`, `graph cycles`, `graph spof`, `graph orphans`, `graph audit`, `impact node`, `certs list`, `certs expiring`, `certs probe`, `db stats`, `version`.
 
 ## Analysis
 
@@ -161,6 +161,32 @@ Impact Analysis: tf:network:prod-vpc
    │       └── [depends_on] tf:dns_record:web.example.com (dns_record)
    └── [depends_on] tf:database:cloudsql-prod (database)
 ```
+
+### Security Audit
+
+AIB includes a built-in security audit engine that inspects the graph for common misconfigurations across all IaC sources. The engine runs 12 checks across three severity levels (critical, warning, info):
+
+| Check | Severity | Description |
+|-------|----------|-------------|
+| `public-database` | critical | Databases with `publicly_accessible = true` |
+| `unencrypted-storage` | critical | Databases/buckets without encryption at rest |
+| `permissive-firewall` | critical | Security groups allowing ingress from `0.0.0.0/0` |
+| `privileged-container` | critical | Kubernetes containers running in privileged mode |
+| `host-namespace` | critical | Pods using `hostNetwork`, `hostPID`, or `hostIPC` |
+| `no-deletion-protection` | warning | Databases without deletion protection |
+| `single-az-database` | warning | Databases not configured for Multi-AZ |
+| `public-bucket` | warning | S3 buckets with public ACLs |
+| `public-load-balancer` | warning | LoadBalancer services exposed externally |
+| `public-instance` | warning | VMs with public IP addresses |
+| `orphan-secret` | info | Kubernetes secrets not referenced by any workload |
+| `container-security-best-practices` | info | Containers missing `runAsNonRoot`, `readOnlyRootFilesystem`, or with `allowPrivilegeEscalation` |
+
+```bash
+aib graph audit                            # tabular report
+aib -o json graph audit | jq '.findings[] | select(.severity == "critical")'
+```
+
+The web UI highlights nodes with audit findings: **red borders** for critical findings and **orange borders** for warnings. Clicking a flagged node shows a security findings banner at the top of the detail panel.
 
 ### Cycles, SPOF, Orphans
 
@@ -212,6 +238,7 @@ Recent UI capabilities include:
 - connection-string-aware detail rendering with one-click `Copy` actions
 - **Connection Evidence** section on edges showing how each relationship was discovered (`via`, `raw_value`, `reference`) with All/connects_to filter
 - **Online Icons** toggle (consent-gated) that fetches service/provider icons from [Simple Icons](https://simpleicons.org/) CDN and overlays them on graph nodes (Kubernetes, Terraform, Docker, Redis, PostgreSQL, Ansible, etc.)
+- **Security Risk Indicators**: nodes with audit findings get colored borders — red for critical, orange for warning — with a security findings banner in the detail panel
 - Graph Focus panel with Dependencies, Impact, Find Secrets Path, and Find External Path modes
 
 API docs are available at `/api/docs` (Swagger UI).
@@ -235,6 +262,7 @@ For parser paths that call external tools (`kubectl`, `helm`, `terraform`), AIB 
 | `GET` | `/api/v1/graph/analysis/cycles` | Circular dependencies |
 | `GET` | `/api/v1/graph/analysis/spof` | Single points of failure (`?min_affected=`, `?limit=`) |
 | `GET` | `/api/v1/graph/analysis/orphans` | Orphan nodes |
+| `GET` | `/api/v1/graph/analysis/audit` | Security audit findings |
 | `GET` | `/api/v1/impact/{nodeId}` | Blast radius |
 | `GET` | `/api/v1/plan/impact` | Terraform plan impact analysis |
 | `GET` | `/api/v1/certs` | All tracked certificates |

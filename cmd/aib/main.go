@@ -469,7 +469,7 @@ func (a *cliApp) graphCmd() *cobra.Command {
 		Use:   "graph",
 		Short: "Query the asset graph",
 	}
-	cmd.AddCommand(a.graphShowCmd(), a.graphNodesCmd(), a.graphEdgesCmd(), a.graphNeighborsCmd(), a.graphPathCmd(), a.graphDepsCmd(), a.graphPruneCmd(), a.graphExportCmd(), a.graphSyncCmd(), a.graphCyclesCmd(), a.graphSPOFCmd(), a.graphOrphansCmd())
+	cmd.AddCommand(a.graphShowCmd(), a.graphNodesCmd(), a.graphEdgesCmd(), a.graphNeighborsCmd(), a.graphPathCmd(), a.graphDepsCmd(), a.graphPruneCmd(), a.graphExportCmd(), a.graphSyncCmd(), a.graphCyclesCmd(), a.graphSPOFCmd(), a.graphOrphansCmd(), a.graphAuditCmd())
 	return cmd
 }
 
@@ -1022,6 +1022,45 @@ func (a *cliApp) graphOrphansCmd() *cobra.Command {
 }
 
 // --- impact ---
+
+func (a *cliApp) graphAuditCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "audit",
+		Short: "Run security audit against the asset graph",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			store, _, err := a.openStore()
+			if err != nil {
+				return err
+			}
+			defer store.Close() //nolint:errcheck // best-effort cleanup
+
+			report, err := graph.RunAudit(cmd.Context(), store)
+			if err != nil {
+				return err
+			}
+
+			if a.jsonOutput() {
+				return a.writeJSON(report)
+			}
+
+			if len(report.Findings) == 0 {
+				_, _ = fmt.Fprintln(a.out, "No security findings. All clear!")
+				return nil
+			}
+
+			_, _ = fmt.Fprintf(a.out, "Security Audit: %d finding(s)  [critical: %d  warning: %d  info: %d]\n\n",
+				report.Summary.Total, report.Summary.Critical, report.Summary.Warning, report.Summary.Info)
+
+			w := tabwriter.NewWriter(a.out, 0, 0, 2, ' ', 0)
+			_, _ = fmt.Fprintln(w, "SEVERITY\tRULE\tRESOURCE\tTYPE\tDESCRIPTION")
+			for _, f := range report.Findings {
+				sev := strings.ToUpper(string(f.Severity))
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", sev, f.Rule, f.Resource, f.Type, f.Description)
+			}
+			return w.Flush()
+		},
+	}
+}
 
 func (a *cliApp) impactCmd() *cobra.Command {
 	cmd := &cobra.Command{

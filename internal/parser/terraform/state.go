@@ -330,12 +330,72 @@ func extractMetadata(resourceType string, attrs map[string]any) map[string]strin
 		"image", "ami", "arn", "self_link", "project",
 		"network", "subnetwork", "ip_address", "private_ip",
 		"public_ip", "network_ip", "nat_ip",
+		// Security: encryption & access
+		"engine", "engine_version", "db_name", "acl",
 	}
 
 	for _, key := range stringKeys {
 		if v, ok := attrs[key].(string); ok && v != "" {
 			meta[key] = v
 		}
+	}
+
+	// Boolean security-relevant fields
+	boolKeys := []string{
+		"encrypted", "storage_encrypted", "publicly_accessible",
+		"associate_public_ip_address", "deletion_protection", "multi_az",
+	}
+	for _, key := range boolKeys {
+		switch v := attrs[key].(type) {
+		case bool:
+			meta[key] = fmt.Sprintf("%t", v)
+		case string:
+			if v != "" {
+				meta[key] = v
+			}
+		}
+	}
+
+	// Security group ingress/egress CIDR extraction
+	for _, direction := range []string{"ingress", "egress"} {
+		if rules, ok := attrs[direction].([]any); ok {
+			var cidrs []string
+			for _, r := range rules {
+				if rule, ok := r.(map[string]any); ok {
+					if blocks, ok := rule["cidr_blocks"].([]any); ok {
+						for _, b := range blocks {
+							if s, ok := b.(string); ok {
+								cidrs = append(cidrs, s)
+							}
+						}
+					}
+					if blocks, ok := rule["ipv6_cidr_blocks"].([]any); ok {
+						for _, b := range blocks {
+							if s, ok := b.(string); ok {
+								cidrs = append(cidrs, s)
+							}
+						}
+					}
+				}
+			}
+			if len(cidrs) > 0 {
+				meta[direction+"_cidrs"] = strings.Join(cidrs, ",")
+			}
+		}
+	}
+
+	// Versioning status (S3 buckets)
+	if ver, ok := attrs["versioning"].([]any); ok && len(ver) > 0 {
+		if v, ok := ver[0].(map[string]any); ok {
+			if enabled, ok := v["enabled"].(bool); ok {
+				meta["versioning"] = fmt.Sprintf("%t", enabled)
+			}
+		}
+	}
+
+	// Logging status (S3 buckets)
+	if logging, ok := attrs["logging"].([]any); ok {
+		meta["logging"] = fmt.Sprintf("%t", len(logging) > 0)
 	}
 
 	if tags, ok := attrs["tags"].(map[string]any); ok {

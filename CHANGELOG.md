@@ -2,6 +2,25 @@
 
 All notable changes to AIB are documented here. See [GitHub Releases](https://github.com/matijazezelj/aib/releases) for download links.
 
+## [1.1.0] - 2026-02-17
+
+### Added
+- **Security audit engine**: 12 built-in checks across three severity levels (critical, warning, info)
+  - Detects public databases, unencrypted storage, permissive firewall rules, missing deletion protection, single-AZ databases, public S3 buckets, privileged containers, host namespace usage, public load balancers, orphan secrets, public instances, and container security best practices
+  - CLI: `aib graph audit` with `--output json` support
+  - API: `GET /api/v1/graph/analysis/audit`
+- **Security metadata extraction** in parsers:
+  - Terraform: `encrypted`, `storage_encrypted`, `publicly_accessible`, `deletion_protection`, `multi_az`, ingress/egress CIDRs, S3 versioning/logging
+  - CloudFormation: `PubliclyAccessible`, `StorageEncrypted`, `DeletionProtection`, `MultiAZ`, security group ingress CIDRs, S3 `AccessControl`
+  - Pulumi: `encrypted`, `storageEncrypted`, `publiclyAccessible`, `deletionProtection`, `multiAz`, ingress CIDRs
+  - Kubernetes: container security context (`privileged`, `runAsNonRoot`, `readOnlyRootFilesystem`, `allowPrivilegeEscalation`, `runAsUser`), pod-level `hostNetwork`/`hostPID`/`hostIPC`, `serviceAccountName`
+- **Visual security risk indicators** in web UI:
+  - Red borders on nodes with critical audit findings
+  - Orange borders on nodes with warning audit findings
+  - Security findings banner in node detail panel
+- **Built-in AWS service icons**: embedded SVG icons for 17 AWS resource types (no CDN dependency)
+- **JSON output**: global `--output json` / `-o json` flag for all 15 CLI query commands
+
 ## [1.0.0] - 2026-02-16
 
 ### Added

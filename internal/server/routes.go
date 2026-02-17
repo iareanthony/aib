@@ -23,6 +23,7 @@ func RegisterRoutes(mux *http.ServeMux, s *Server) {
 	mux.HandleFunc("GET /api/v1/graph/analysis/cycles", s.handleCycles)
 	mux.HandleFunc("GET /api/v1/graph/analysis/spof", s.handleSPOF)
 	mux.HandleFunc("GET /api/v1/graph/analysis/orphans", s.handleOrphans)
+	mux.HandleFunc("GET /api/v1/graph/analysis/audit", s.handleAudit)
 
 	mux.HandleFunc("GET /api/v1/export/json", s.handleExportJSON)
 	mux.HandleFunc("GET /api/v1/export/dot", s.handleExportDOT)
