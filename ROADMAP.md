@@ -75,6 +75,16 @@
 - [x] CLI coverage improvement completed (9.7% → 54% via cliApp DI refactor)
 - [x] CHANGELOG, SECURITY, and ROADMAP updated for v1.0
 
+### v1.0.1 — JSON Output & Polish
+- [x] Global `--output json` (`-o json`) flag for all CLI query commands
+- [x] Edge metadata enrichment across all parsers (`via`, `raw_value`, `reference`)
+- [x] Connection Evidence section in web UI with filter toggle
+- [x] Online Icons toggle (consent-gated, Simple Icons CDN)
+- [x] Connection string inference for Ansible (Redis, PostgreSQL)
+- [x] Kubernetes workload interconnectivity from env/ConfigMap values
+- [x] CSP updated for CDN icon loading (`connect-src`, `img-src data:`)
+- [x] Test coverage gaps filled (compose, terraform, pulumi, CFN, server CSP, ansible)
+
 ---
 
 ## Known Limitations

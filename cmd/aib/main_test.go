@@ -25,14 +25,15 @@ func newTestApp(t *testing.T) (*cliApp, *bytes.Buffer) {
 	t.Helper()
 	var buf bytes.Buffer
 	app := &cliApp{
-		dbPath:    filepath.Join(t.TempDir(), "test.db"),
-		logFormat: "text",
-		logLevel:  "info",
-		version:   "test",
-		out:       &buf,
-		errOut:    io.Discard,
-		in:        strings.NewReader(""),
-		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		dbPath:       filepath.Join(t.TempDir(), "test.db"),
+		logFormat:    "text",
+		logLevel:     "info",
+		outputFormat: "text",
+		version:      "test",
+		out:          &buf,
+		errOut:       io.Discard,
+		in:           strings.NewReader(""),
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	return app, &buf
 }
@@ -1504,5 +1505,321 @@ func TestGraphNodesCmd_WithFilter(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, "web1") {
 		t.Errorf("expected 'web1' in output, got: %s", output)
+	}
+}
+
+// --- JSON output tests (--output=json) ---
+
+func TestGraphShowCmd_JSON(t *testing.T) {
+	app, buf := newTestApp(t)
+	app.outputFormat = "json"
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphShowCmd(), "show")
+	if err != nil {
+		t.Fatalf("graph show --output=json error: %v", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, buf.String())
+	}
+	if result["total_nodes"].(float64) != 2 {
+		t.Errorf("expected total_nodes=2, got %v", result["total_nodes"])
+	}
+	if result["total_edges"].(float64) != 1 {
+		t.Errorf("expected total_edges=1, got %v", result["total_edges"])
+	}
+	if result["nodes_by_type"] == nil {
+		t.Error("expected nodes_by_type in JSON output")
+	}
+	if result["edges_by_type"] == nil {
+		t.Error("expected edges_by_type in JSON output")
+	}
+}
+
+func TestGraphNodesCmd_JSON(t *testing.T) {
+	app, buf := newTestApp(t)
+	app.outputFormat = "json"
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphNodesCmd(), "nodes")
+	if err != nil {
+		t.Fatalf("graph nodes --output=json error: %v", err)
+	}
+
+	var nodes []models.Node
+	if err := json.Unmarshal(buf.Bytes(), &nodes); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, buf.String())
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("expected 2 nodes, got %d", len(nodes))
+	}
+	ids := map[string]bool{}
+	for _, n := range nodes {
+		ids[n.ID] = true
+		if n.Name == "" {
+			t.Error("expected non-empty node name")
+		}
+	}
+	if !ids["vm:web1"] || !ids["db:pg1"] {
+		t.Errorf("expected vm:web1 and db:pg1, got %v", ids)
+	}
+}
+
+func TestGraphEdgesCmd_JSON(t *testing.T) {
+	app, buf := newTestApp(t)
+	app.outputFormat = "json"
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphEdgesCmd(), "edges")
+	if err != nil {
+		t.Fatalf("graph edges --output=json error: %v", err)
+	}
+
+	var edges []models.Edge
+	if err := json.Unmarshal(buf.Bytes(), &edges); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, buf.String())
+	}
+	if len(edges) != 1 {
+		t.Fatalf("expected 1 edge, got %d", len(edges))
+	}
+	if edges[0].FromID != "vm:web1" || edges[0].ToID != "db:pg1" {
+		t.Errorf("unexpected edge: %s -> %s", edges[0].FromID, edges[0].ToID)
+	}
+}
+
+func TestGraphNeighborsCmd_JSON(t *testing.T) {
+	app, buf := newTestApp(t)
+	app.outputFormat = "json"
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphNeighborsCmd(), "neighbors", "vm:web1")
+	if err != nil {
+		t.Fatalf("graph neighbors --output=json error: %v", err)
+	}
+
+	var nodes []models.Node
+	if err := json.Unmarshal(buf.Bytes(), &nodes); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, buf.String())
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 neighbor, got %d", len(nodes))
+	}
+	if nodes[0].ID != "db:pg1" {
+		t.Errorf("expected neighbor db:pg1, got %s", nodes[0].ID)
+	}
+}
+
+func TestGraphPathCmd_JSON(t *testing.T) {
+	app, buf := newTestApp(t)
+	app.outputFormat = "json"
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphPathCmd(), "path", "vm:web1", "db:pg1")
+	if err != nil {
+		t.Fatalf("graph path --output=json error: %v", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, buf.String())
+	}
+	if result["from"] != "vm:web1" {
+		t.Errorf("expected from=vm:web1, got %v", result["from"])
+	}
+	if result["to"] != "db:pg1" {
+		t.Errorf("expected to=db:pg1, got %v", result["to"])
+	}
+	if result["nodes"] == nil {
+		t.Error("expected nodes in JSON output")
+	}
+}
+
+func TestGraphDepsCmd_JSON(t *testing.T) {
+	app, buf := newTestApp(t)
+	app.outputFormat = "json"
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphDepsCmd(), "deps", "vm:web1")
+	if err != nil {
+		t.Fatalf("graph deps --output=json error: %v", err)
+	}
+
+	var nodes []models.Node
+	if err := json.Unmarshal(buf.Bytes(), &nodes); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, buf.String())
+	}
+	// vm:web1 depends on db:pg1
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 dependency, got %d", len(nodes))
+	}
+}
+
+func TestGraphOrphansCmd_JSON(t *testing.T) {
+	app, buf := newTestApp(t)
+	app.outputFormat = "json"
+
+	// Seed an orphan node (no edges)
+	store, _, err := app.openStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	now := time.Now()
+	_ = store.UpsertNode(ctx, models.Node{
+		ID: "orphan:lonely", Name: "lonely", Type: models.AssetVM,
+		Source: "test", Metadata: map[string]string{},
+		LastSeen: now, FirstSeen: now,
+	})
+	store.Close() //nolint:errcheck
+
+	err = runCmd(app, app.graphOrphansCmd(), "orphans")
+	if err != nil {
+		t.Fatalf("graph orphans --output=json error: %v", err)
+	}
+
+	var nodes []models.Node
+	if err := json.Unmarshal(buf.Bytes(), &nodes); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, buf.String())
+	}
+	if len(nodes) != 1 || nodes[0].ID != "orphan:lonely" {
+		t.Errorf("expected orphan node, got %v", nodes)
+	}
+}
+
+func TestGraphCyclesCmd_JSON(t *testing.T) {
+	app, buf := newTestApp(t)
+	app.outputFormat = "json"
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphCyclesCmd(), "cycles")
+	if err != nil {
+		t.Fatalf("graph cycles --output=json error: %v", err)
+	}
+
+	var cycles [][]string
+	if err := json.Unmarshal(buf.Bytes(), &cycles); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, buf.String())
+	}
+	// no cycles in test data
+	if len(cycles) != 0 {
+		t.Errorf("expected 0 cycles, got %d", len(cycles))
+	}
+}
+
+func TestGraphSPOFCmd_JSON(t *testing.T) {
+	app, buf := newTestApp(t)
+	app.outputFormat = "json"
+	seedTestData(t, app)
+
+	err := runCmd(app, app.graphSPOFCmd(), "spof")
+	if err != nil {
+		t.Fatalf("graph spof --output=json error: %v", err)
+	}
+
+	var spofs []graph.SPOFNode
+	if err := json.Unmarshal(buf.Bytes(), &spofs); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, buf.String())
+	}
+	// seed data has web1->pg1, so pg1 is a SPOF
+	found := false
+	for _, s := range spofs {
+		if s.Node.ID == "db:pg1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected db:pg1 as SPOF")
+	}
+}
+
+func TestImpactNodeCmd_JSON(t *testing.T) {
+	app, buf := newTestApp(t)
+	app.outputFormat = "json"
+	seedTestData(t, app)
+
+	err := runCmd(app, app.impactCmd(), "impact", "node", "db:pg1")
+	if err != nil {
+		t.Fatalf("impact node --output=json error: %v", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, buf.String())
+	}
+	if result["node_id"] != "db:pg1" {
+		t.Errorf("expected node_id=db:pg1, got %v", result["node_id"])
+	}
+	if result["impact_tree"] == nil {
+		t.Error("expected impact_tree in JSON output")
+	}
+	if result["blast_radius"] == nil {
+		t.Error("expected blast_radius in JSON output")
+	}
+}
+
+func TestDBStatsCmd_JSON(t *testing.T) {
+	app, buf := newTestApp(t)
+	app.outputFormat = "json"
+	seedTestData(t, app)
+
+	err := runCmd(app, app.dbStatsCmd(), "stats")
+	if err != nil {
+		t.Fatalf("db stats --output=json error: %v", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, buf.String())
+	}
+	if result["total_nodes"].(float64) != 2 {
+		t.Errorf("expected total_nodes=2, got %v", result["total_nodes"])
+	}
+	if result["total_edges"].(float64) != 1 {
+		t.Errorf("expected total_edges=1, got %v", result["total_edges"])
+	}
+	if result["path"] == nil {
+		t.Error("expected path in JSON output")
+	}
+}
+
+func TestVersionCmd_JSON(t *testing.T) {
+	app, buf := newTestApp(t)
+	app.outputFormat = "json"
+
+	err := runCmd(app, app.versionCmd(), "version")
+	if err != nil {
+		t.Fatalf("version --output=json error: %v", err)
+	}
+
+	var result map[string]string
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, buf.String())
+	}
+	if result["version"] != "test" {
+		t.Errorf("expected version=test, got %q", result["version"])
+	}
+}
+
+func TestCertsListCmd_JSON_Empty(t *testing.T) {
+	app, buf := newTestApp(t)
+	app.outputFormat = "json"
+
+	// Init store so certs list can run
+	store, _, err := app.openStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Close() //nolint:errcheck
+
+	err = runCmd(app, app.certsListCmd(), "list")
+	if err != nil {
+		t.Fatalf("certs list --output=json error: %v", err)
+	}
+
+	// Should produce valid JSON even when empty
+	if !json.Valid(buf.Bytes()) {
+		t.Fatalf("expected valid JSON, got: %s", buf.String())
 	}
 }

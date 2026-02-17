@@ -127,6 +127,22 @@ aib graph export --format=json             # also: dot, mermaid
 aib graph prune --stale-days=30            # remove stale nodes
 ```
 
+### JSON Output
+
+All query commands support `--output json` (or `-o json`) for machine-readable output, making it easy to pipe into `jq`, scripts, or CI pipelines:
+
+```bash
+aib -o json graph nodes --type=vm | jq '.[].id'
+aib -o json graph edges --type=connects_to | jq 'length'
+aib -o json graph show | jq '.total_nodes'
+aib -o json impact node tf:vm:web-prod-1 | jq '.blast_radius'
+aib -o json graph spof | jq '.[0].node.id'
+aib -o json certs list | jq '.[] | select(.status == "critical")'
+aib -o json db stats | jq '{nodes: .total_nodes, edges: .total_edges}'
+```
+
+Supported commands: `graph show`, `graph nodes`, `graph edges`, `graph neighbors`, `graph path`, `graph deps`, `graph cycles`, `graph spof`, `graph orphans`, `impact node`, `certs list`, `certs expiring`, `certs probe`, `db stats`, `version`.
+
 ## Analysis
 
 ### Blast Radius

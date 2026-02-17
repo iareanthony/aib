@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -27,11 +28,24 @@ var version = "dev"
 
 type cliApp struct {
 	cfgFile, dbPath, logFormat, logLevel string
+	outputFormat                         string // "text" or "json"
 	logger                               *slog.Logger
 	version                              string
 	out                                  io.Writer // os.Stdout in prod, bytes.Buffer in tests
 	errOut                               io.Writer // os.Stderr in prod
 	in                                   io.Reader // os.Stdin in prod (for prune/backup confirmation)
+}
+
+// writeJSON encodes v as indented JSON and writes it to a.out.
+func (a *cliApp) writeJSON(v any) error {
+	enc := json.NewEncoder(a.out)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
+}
+
+// jsonOutput returns true if the user requested JSON output.
+func (a *cliApp) jsonOutput() bool {
+	return a.outputFormat == "json"
 }
 
 // buildAlerters creates the configured alert backends from config.
@@ -55,6 +69,7 @@ func main() {
 		out:     os.Stdout,
 		errOut:  os.Stderr,
 		in:      os.Stdin,
+		outputFormat: "text",
 		logger:  slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})),
 	}
 
@@ -84,6 +99,7 @@ func main() {
 	root.PersistentFlags().StringVar(&app.dbPath, "db", "", "database path (overrides config)")
 	root.PersistentFlags().StringVar(&app.logFormat, "log-format", "text", "log output format (text, json)")
 	root.PersistentFlags().StringVar(&app.logLevel, "log-level", "info", "log level (debug, info, warn, error)")
+	root.PersistentFlags().StringVarP(&app.outputFormat, "output", "o", "text", "output format: text, json")
 
 	root.AddCommand(
 		app.scanCmd(),
@@ -474,6 +490,15 @@ func (a *cliApp) graphShowCmd() *cobra.Command {
 			nodesByType, _ := store.NodeCountByType(ctx)
 			edgesByType, _ := store.EdgeCountByType(ctx)
 
+			if a.jsonOutput() {
+				return a.writeJSON(map[string]any{
+					"total_nodes":   nodeCount,
+					"total_edges":   edgeCount,
+					"nodes_by_type": nodesByType,
+					"edges_by_type": edgesByType,
+				})
+			}
+
 			_, _ = fmt.Fprintf(a.out, "Graph Summary\n")
 			_, _ = fmt.Fprintf(a.out, "  Total nodes: %d\n", nodeCount)
 			_, _ = fmt.Fprintf(a.out, "  Total edges: %d\n\n", edgeCount)
@@ -514,6 +539,10 @@ func (a *cliApp) graphNodesCmd() *cobra.Command {
 				return err
 			}
 
+			if a.jsonOutput() {
+				return a.writeJSON(nodes)
+			}
+
 			w := tabwriter.NewWriter(a.out, 0, 0, 2, ' ', 0)
 			_, _ = fmt.Fprintln(w, "ID\tNAME\tTYPE\tSOURCE\tPROVIDER")
 			for _, n := range nodes {
@@ -548,6 +577,10 @@ func (a *cliApp) graphEdgesCmd() *cobra.Command {
 			})
 			if err != nil {
 				return err
+			}
+
+			if a.jsonOutput() {
+				return a.writeJSON(edges)
 			}
 
 			w := tabwriter.NewWriter(a.out, 0, 0, 2, ' ', 0)
@@ -587,12 +620,16 @@ func (a *cliApp) graphNeighborsCmd() *cobra.Command {
 				return fmt.Errorf("node %q not found", nodeID)
 			}
 
-			_, _ = fmt.Fprintf(a.out, "Neighbors of %s (%s, %s)\n\n", node.Name, node.Type, node.Source)
-
 			neighbors, err := store.GetNeighbors(ctx, nodeID)
 			if err != nil {
 				return err
 			}
+
+			if a.jsonOutput() {
+				return a.writeJSON(neighbors)
+			}
+
+			_, _ = fmt.Fprintf(a.out, "Neighbors of %s (%s, %s)\n\n", node.Name, node.Type, node.Source)
 
 			w := tabwriter.NewWriter(a.out, 0, 0, 2, ' ', 0)
 			_, _ = fmt.Fprintln(w, "ID\tNAME\tTYPE\tSOURCE")
@@ -641,6 +678,15 @@ func (a *cliApp) graphPathCmd() *cobra.Command {
 				return err
 			}
 
+			if a.jsonOutput() {
+				return a.writeJSON(map[string]any{
+					"from":  fromID,
+					"to":    toID,
+					"steps": len(nodes) - 1,
+					"nodes": nodes,
+				})
+			}
+
 			_, _ = fmt.Fprintf(a.out, "Shortest path: %s → %s (%d steps)\n\n", fromID, toID, len(nodes)-1)
 
 			w := tabwriter.NewWriter(a.out, 0, 0, 2, ' ', 0)
@@ -681,6 +727,10 @@ func (a *cliApp) graphDepsCmd() *cobra.Command {
 			deps, err := engine.DependencyChain(ctx, nodeID, depth)
 			if err != nil {
 				return err
+			}
+
+			if a.jsonOutput() {
+				return a.writeJSON(deps)
 			}
 
 			_, _ = fmt.Fprintf(a.out, "Dependencies of %s (%s, %s) — depth %d\n\n", node.Name, node.Type, node.Source, depth)
@@ -867,6 +917,10 @@ func (a *cliApp) graphCyclesCmd() *cobra.Command {
 				return err
 			}
 
+			if a.jsonOutput() {
+				return a.writeJSON(cycles)
+			}
+
 			if len(cycles) == 0 {
 				_, _ = fmt.Fprintln(a.out, "No circular dependencies found.")
 				return nil
@@ -902,13 +956,17 @@ func (a *cliApp) graphSPOFCmd() *cobra.Command {
 				return err
 			}
 
+			if limit > 0 && len(spofs) > limit {
+				spofs = spofs[:limit]
+			}
+
+			if a.jsonOutput() {
+				return a.writeJSON(spofs)
+			}
+
 			if len(spofs) == 0 {
 				_, _ = fmt.Fprintln(a.out, "No single points of failure found.")
 				return nil
-			}
-
-			if limit > 0 && len(spofs) > limit {
-				spofs = spofs[:limit]
 			}
 
 			_, _ = fmt.Fprintf(a.out, "Top %d single points of failure (min affected: %d):\n\n", len(spofs), minAffected)
@@ -941,6 +999,10 @@ func (a *cliApp) graphOrphansCmd() *cobra.Command {
 			orphans, err := engine.FindOrphans(cmd.Context())
 			if err != nil {
 				return err
+			}
+
+			if a.jsonOutput() {
+				return a.writeJSON(orphans)
 			}
 
 			if len(orphans) == 0 {
@@ -996,6 +1058,18 @@ func (a *cliApp) impactNodeCmd() *cobra.Command {
 			tree, err := engine.BlastRadiusTree(ctx, nodeID)
 			if err != nil {
 				return err
+			}
+
+			if a.jsonOutput() {
+				return a.writeJSON(map[string]any{
+					"node_id":        nodeID,
+					"type":           node.Type,
+					"provider":       node.Provider,
+					"source":         node.Source,
+					"blast_radius":   countTreeNodes(tree) - 1,
+					"impact_tree":    tree,
+					"warnings":       collectWarnings(tree),
+				})
 			}
 
 			// Count total affected
@@ -1110,6 +1184,10 @@ func (a *cliApp) certsListCmd() *cobra.Command {
 				return err
 			}
 
+			if a.jsonOutput() {
+				return a.writeJSON(certList)
+			}
+
 			if len(certList) == 0 {
 				_, _ = fmt.Fprintln(a.out, "No certificates found. Run a scan or probe first.")
 				return nil
@@ -1150,6 +1228,10 @@ func (a *cliApp) certsExpiringCmd() *cobra.Command {
 				return err
 			}
 
+			if a.jsonOutput() {
+				return a.writeJSON(certList)
+			}
+
 			if len(certList) == 0 {
 				_, _ = fmt.Fprintf(a.out, "No certificates expiring within %d days.\n", days)
 				return nil
@@ -1186,6 +1268,10 @@ func (a *cliApp) certsProbeCmd() *cobra.Command {
 			ci, err := tracker.ProbeAndStore(ctx, args[0])
 			if err != nil {
 				return err
+			}
+
+			if a.jsonOutput() {
+				return a.writeJSON(ci)
 			}
 
 			_, _ = fmt.Fprintf(a.out, "Certificate: %s\n", ci.Node.Name)
@@ -1370,6 +1456,25 @@ func (a *cliApp) dbStatsCmd() *cobra.Command {
 			edgesByType, _ := store.EdgeCountByType(ctx)
 			scans, _ := store.ListScans(ctx, 100)
 
+			// Scan summary
+			statusCounts := make(map[string]int)
+			for _, s := range scans {
+				statusCounts[s.Status]++
+			}
+
+			if a.jsonOutput() {
+				return a.writeJSON(map[string]any{
+					"path":           path,
+					"size":           sizeStr,
+					"total_nodes":    nodeCount,
+					"total_edges":    edgeCount,
+					"nodes_by_type":  nodesByType,
+					"edges_by_type":  edgesByType,
+					"total_scans":    len(scans),
+					"scans_by_status": statusCounts,
+				})
+			}
+
 			_, _ = fmt.Fprintf(a.out, "Database: %s (%s)\n\n", path, sizeStr)
 			_, _ = fmt.Fprintf(a.out, "Nodes: %d\n", nodeCount)
 			for t, c := range nodesByType {
@@ -1380,11 +1485,6 @@ func (a *cliApp) dbStatsCmd() *cobra.Command {
 				_, _ = fmt.Fprintf(a.out, "  %-20s %d\n", t, c)
 			}
 
-			// Scan summary
-			statusCounts := make(map[string]int)
-			for _, s := range scans {
-				statusCounts[s.Status]++
-			}
 			_, _ = fmt.Fprintf(a.out, "\nScans: %d total\n", len(scans))
 			for status, count := range statusCounts {
 				_, _ = fmt.Fprintf(a.out, "  %-20s %d\n", status, count)
@@ -1472,6 +1572,10 @@ func (a *cliApp) versionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print version",
 		Run: func(_ *cobra.Command, _ []string) {
+			if a.jsonOutput() {
+				_ = a.writeJSON(map[string]string{"version": a.version})
+				return
+			}
 			_, _ = fmt.Fprintf(a.out, "aib %s\n", a.version)
 		},
 	}
