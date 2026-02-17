@@ -3,6 +3,8 @@ package kubernetes
 import (
 	"bytes"
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 	"time"
 
@@ -18,7 +20,7 @@ type k8sResource struct {
 	Kind       string      `yaml:"kind"`
 	Metadata   k8sMeta     `yaml:"metadata"`
 	Spec       k8sSpec     `yaml:"spec"`
-	Data       interface{} `yaml:"data"`
+	Data       map[string]string `yaml:"data"`
 
 	// RBAC: RoleBinding/ClusterRoleBinding top-level fields
 	RoleRef  *k8sRoleRef  `yaml:"roleRef"`
@@ -165,6 +167,7 @@ type k8sEnvFrom struct {
 
 type k8sEnv struct {
 	Name      string       `yaml:"name"`
+	Value     string       `yaml:"value"`
 	ValueFrom *k8sValueFrom `yaml:"valueFrom"`
 }
 
@@ -175,6 +178,7 @@ type k8sValueFrom struct {
 
 type k8sKeyRef struct {
 	Name string `yaml:"name"`
+	Key  string `yaml:"key"`
 }
 
 type k8sRef struct {
@@ -270,6 +274,8 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 	// First pass: create all nodes so we can resolve references.
 	nodeMap := make(map[string]models.Node)    // nodeID → node
 	workloadLabels := make(map[string]map[string]string) // nodeID → pod template labels
+	serviceIDs := make(map[string]bool)
+	configMapData := make(map[string]map[string]string)
 
 	for _, res := range resources {
 		ns := res.Metadata.Namespace
@@ -349,6 +355,7 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 				FirstSeen:  now,
 			}
 			nodeMap[nodeID] = node
+			serviceIDs[nodeID] = true
 			result.Nodes = append(result.Nodes, node)
 
 		case "Ingress":
@@ -430,6 +437,9 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 				FirstSeen:  now,
 			}
 			nodeMap[nodeID] = node
+			if len(res.Data) > 0 {
+				configMapData[nodeID] = res.Data
+			}
 			result.Nodes = append(result.Nodes, node)
 
 		case "Namespace":
@@ -673,6 +683,7 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 		case "Deployment", "StatefulSet", "DaemonSet", "ReplicaSet":
 			wlID := k8sNodeID("pod", ns, res.Metadata.Name)
 			seen := make(map[string]bool)
+			connectivityValues := make(map[string]string)
 
 			// Volume mounts → Secrets and ConfigMaps
 			for _, vol := range res.Spec.Template.Spec.Volumes {
@@ -741,9 +752,15 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 							})
 						}
 					ensureNode(nodeMap, result, cmID, ef.ConfigMapRef.Name, models.AssetSecret, ns, sourceFile, now)
+						for key, value := range configMapData[cmID] {
+							connectivityValues["configmap:"+ef.ConfigMapRef.Name+":"+key] = value
+						}
 					}
 				}
 				for _, env := range c.Env {
+					if strings.TrimSpace(env.Value) != "" {
+						connectivityValues["env:"+env.Name] = env.Value
+					}
 					if env.ValueFrom == nil {
 						continue
 					}
@@ -776,7 +793,34 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 							})
 						}
 					ensureNode(nodeMap, result, cmID, env.ValueFrom.ConfigMapKeyRef.Name, models.AssetSecret, ns, sourceFile, now)
+						if env.ValueFrom.ConfigMapKeyRef.Key != "" {
+							if cmValues, ok := configMapData[cmID]; ok {
+								if value, exists := cmValues[env.ValueFrom.ConfigMapKeyRef.Key]; exists {
+									connectivityValues["configmap_key:"+env.ValueFrom.ConfigMapKeyRef.Name+":"+env.ValueFrom.ConfigMapKeyRef.Key] = value
+								}
+							}
+						}
 					}
+				}
+			}
+
+			for source, value := range connectivityValues {
+				for _, svcID := range inferServiceTargets(value, ns, serviceIDs) {
+					eid := fmt.Sprintf("%s->connects_to->%s", wlID, svcID)
+					if seen[eid] {
+						continue
+					}
+					seen[eid] = true
+					result.Edges = append(result.Edges, models.Edge{
+						ID:     eid,
+						FromID: wlID,
+						ToID:   svcID,
+						Type:   models.EdgeConnectsTo,
+						Metadata: map[string]string{
+							"via":      source,
+							"raw_value": value,
+						},
+					})
 				}
 			}
 
@@ -922,4 +966,112 @@ func labelsMatch(selector, target map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func inferServiceTargets(value, defaultNamespace string, serviceIDs map[string]bool) []string {
+	hosts := extractPotentialHosts(value)
+	seen := make(map[string]bool)
+	var targets []string
+
+	for _, host := range hosts {
+		for _, candidate := range serviceIDCandidatesForHost(host, defaultNamespace) {
+			if serviceIDs[candidate] && !seen[candidate] {
+				seen[candidate] = true
+				targets = append(targets, candidate)
+			}
+		}
+	}
+
+	return targets
+}
+
+func extractPotentialHosts(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+
+	seen := make(map[string]bool)
+	var hosts []string
+	addHost := func(raw string) {
+		raw = strings.TrimSpace(strings.Trim(raw, "\"'()[]{}<>"))
+		if raw == "" {
+			return
+		}
+		if strings.Contains(raw, "/") {
+			raw = strings.SplitN(raw, "/", 2)[0]
+		}
+		if strings.Contains(raw, "@") {
+			raw = strings.SplitN(raw, "@", 2)[1]
+		}
+		if strings.HasPrefix(raw, "[") && strings.Contains(raw, "]") {
+			h, p, err := net.SplitHostPort(raw)
+			if err == nil && h != "" {
+				raw = h
+			} else if p == "" {
+				raw = strings.Trim(raw, "[]")
+			}
+		} else if strings.Count(raw, ":") == 1 {
+			if h, _, err := net.SplitHostPort(raw); err == nil && h != "" {
+				raw = h
+			} else {
+				raw = strings.SplitN(raw, ":", 2)[0]
+			}
+		}
+		raw = strings.Trim(strings.TrimSpace(raw), ".")
+		if raw == "" {
+			return
+		}
+		if !seen[raw] {
+			seen[raw] = true
+			hosts = append(hosts, raw)
+		}
+	}
+
+	if parsed, err := url.Parse(value); err == nil && parsed.Host != "" {
+		if h := parsed.Hostname(); h != "" {
+			addHost(h)
+		}
+	}
+
+	tokens := strings.FieldsFunc(value, func(r rune) bool {
+		switch r {
+		case ' ', '\t', '\n', '\r', ',', ';':
+			return true
+		default:
+			return false
+		}
+	})
+	for _, token := range tokens {
+		if strings.Contains(token, "://") {
+			if parsed, err := url.Parse(token); err == nil && parsed.Host != "" {
+				if h := parsed.Hostname(); h != "" {
+					addHost(h)
+				}
+			}
+			continue
+		}
+		addHost(token)
+	}
+
+	return hosts
+}
+
+func serviceIDCandidatesForHost(host, defaultNamespace string) []string {
+	host = strings.Trim(strings.ToLower(host), ".")
+	if host == "" {
+		return nil
+	}
+
+	parts := strings.Split(host, ".")
+	serviceName := parts[0]
+	if serviceName == "" {
+		return nil
+	}
+
+	candidates := []string{k8sNodeID("service", defaultNamespace, serviceName)}
+	if len(parts) > 1 && parts[1] != "svc" && parts[1] != "cluster" && parts[1] != "local" {
+		candidates = append(candidates, k8sNodeID("service", parts[1], serviceName))
+	}
+	return candidates
 }

@@ -72,6 +72,37 @@ func TestParseStateFile_Edges(t *testing.T) {
 	}
 }
 
+func TestParseStateFile_EdgeMetadata(t *testing.T) {
+	result, err := parseStateFile("testdata/sample.tfstate")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Check dependency edge metadata (source + reference)
+	for _, e := range result.Edges {
+		if e.Type == models.EdgeDependsOn && e.FromID == "tf:vm:web-prod-1" && e.ToID == "tf:network:prod-vpc" {
+			if e.Metadata["source"] != "tfstate_dependency" {
+				t.Errorf("depends_on edge source = %q, want \"tfstate_dependency\"", e.Metadata["source"])
+			}
+			if e.Metadata["reference"] == "" {
+				t.Error("depends_on edge reference should not be empty")
+			}
+		}
+	}
+
+	// Check attribute edge metadata (via + raw_value)
+	for _, e := range result.Edges {
+		if e.Type == models.EdgeConnectsTo && e.Metadata["via"] != "" {
+			if e.Metadata["raw_value"] == "" {
+				t.Errorf("connects_to edge with via=%q should have non-empty raw_value", e.Metadata["via"])
+			}
+			return // found at least one, good
+		}
+	}
+	// Note: attribute edges only exist if resources have network/subnetwork/vpc_id attrs
+	// that resolve to known nodes; if none resolve, this is not a failure.
+}
+
 func TestParseStateFile_Metadata(t *testing.T) {
 	result, err := parseStateFile("testdata/sample.tfstate")
 	if err != nil {

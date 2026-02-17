@@ -214,7 +214,7 @@ func parseCFNWithRefs(data []byte, sourcePath string, refMap map[string]string) 
 						FromID:   nodeID,
 						ToID:     targetID,
 						Type:     models.EdgeDependsOn,
-						Metadata: map[string]string{"via": "DependsOn"},
+						Metadata: map[string]string{"via": "DependsOn", "raw_value": dep},
 					})
 				}
 			}
@@ -327,7 +327,7 @@ func createPropertyEdges(nodeID string, props map[string]any, refMap map[string]
 						FromID:   nodeID,
 						ToID:     targetID,
 						Type:     models.EdgeConnectsTo,
-						Metadata: map[string]string{"via": key},
+						Metadata: map[string]string{"via": key, "raw_value": strVal},
 					})
 				}
 			}
@@ -347,7 +347,7 @@ func createPropertyEdges(nodeID string, props map[string]any, refMap map[string]
 							FromID:   nodeID,
 							ToID:     targetID,
 							Type:     models.EdgeConnectsTo,
-							Metadata: map[string]string{"via": "SecurityGroupIds"},
+							Metadata: map[string]string{"via": "SecurityGroupIds", "raw_value": strVal},
 						})
 					}
 				}

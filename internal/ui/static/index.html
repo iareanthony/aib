@@ -34,6 +34,11 @@
             <option value="type">Group by Type</option>
             <option value="namespace">Group by Namespace</option>
         </select>
+        <select id="layout-mode" title="Graph Layout">
+            <option value="readable">Readable Layout</option>
+            <option value="balanced">Balanced Layout</option>
+            <option value="compact">Compact Layout</option>
+        </select>
         <div class="dropdown" id="export-dropdown">
             <button id="btn-export">Export</button>
             <div class="dropdown-menu" id="export-menu">
@@ -44,9 +49,11 @@
             </div>
         </div>
         <button id="btn-reset">Reset View</button>
+        <button id="btn-declutter" title="Reduce visual noise">Declutter</button>
         <button id="btn-scan">Scan Now</button>
         <span id="scan-status"></span>
         <button id="btn-privacy" title="Privacy Mode">Privacy</button>
+        <button id="btn-online-icons" title="Load service icons from the web (requires consent)">Online Icons</button>
         <button id="btn-legend">Legend</button>
         <button id="btn-shortcuts" title="Keyboard Shortcuts (?)">?</button>
     </div>
@@ -68,7 +75,7 @@
 
     <div id="shortcuts-panel" class="hidden">
         <div class="shortcuts-list">
-            <span><kbd>/</kbd> Focus search</span>
+            <span><kbd>/</kbd> Search</span>
             <span><kbd>Esc</kbd> Deselect / close panel</span>
             <span><kbd>r</kbd> Reset view</span>
             <span><kbd>l</kbd> Toggle legend</span>
@@ -78,28 +85,40 @@
     </div>
 
     <div class="main">
+        <aside id="resource-panel" class="group-panel">
+            <div class="group-panel-header">
+                <h4 id="resource-panel-title">Resource Focus</h4>
+                <div class="group-panel-actions">
+                    <button id="btn-resource-all" type="button">Show all</button>
+                </div>
+            </div>
+            <input type="text" id="resource-search" placeholder="Find resource..." />
+            <div id="resource-panel-list" class="group-panel-list"></div>
+            <div id="resource-resizer" title="Resize panel"></div>
+        </aside>
         <div id="cy"></div>
         <div id="detail-panel" class="hidden">
+            <div id="detail-resizer" title="Resize panel"></div>
             <button id="close-panel">&times;</button>
             <h3 id="detail-name"></h3>
             <div id="detail-content"></div>
             <div class="focus-controls" id="focus-controls">
-                <h4>Focus</h4>
+                <h4>Graph Focus</h4>
                 <div class="focus-row">
-                    <span class="focus-label">Upstream</span>
+                    <span class="focus-label">Dependencies</span>
                     <div class="depth-buttons" id="upstream-depth">
                         <button data-depth="1">1</button><button data-depth="2">2</button><button data-depth="3">3</button><button data-depth="4">4</button><button data-depth="5">5</button>
                     </div>
                 </div>
                 <div class="focus-row">
-                    <span class="focus-label">Downstream</span>
+                    <span class="focus-label">Impact</span>
                     <div class="depth-buttons" id="downstream-depth">
                         <button data-depth="1">1</button><button data-depth="2">2</button><button data-depth="3">3</button><button data-depth="4">4</button><button data-depth="5">5</button>
                     </div>
                 </div>
                 <div class="focus-row">
-                    <button id="btn-secrets-touched">Secrets Touched</button>
-                    <button id="btn-external-exposure">External Exposure</button>
+                    <button id="btn-secrets-touched">Find Secrets Path</button>
+                    <button id="btn-external-exposure">Find External Path</button>
                 </div>
                 <div id="focus-message"></div>
             </div>

@@ -239,7 +239,10 @@ func buildGraph(cf composeFile, sourceFile string) *parser.ParseResult {
 				FromID:   fromID,
 				ToID:     toID,
 				Type:     models.EdgeDependsOn,
-				Metadata: map[string]string{},
+				Metadata: map[string]string{
+					"via":       "depends_on",
+					"raw_value": dep,
+				},
 			})
 		}
 
@@ -252,7 +255,10 @@ func buildGraph(cf composeFile, sourceFile string) *parser.ParseResult {
 				FromID:   fromID,
 				ToID:     toID,
 				Type:     models.EdgeConnectsTo,
-				Metadata: map[string]string{},
+				Metadata: map[string]string{
+					"via":       "networks",
+					"raw_value": net,
+				},
 			})
 		}
 
@@ -275,7 +281,10 @@ func buildGraph(cf composeFile, sourceFile string) *parser.ParseResult {
 				FromID:   fromID,
 				ToID:     toID,
 				Type:     models.EdgeMountsSecret,
-				Metadata: map[string]string{},
+				Metadata: map[string]string{
+					"via":       "volumes",
+					"raw_value": vol,
+				},
 			})
 		}
 	}

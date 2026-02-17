@@ -34,7 +34,7 @@ AIB supports 7 IaC parsers. All support multiple paths with automatic cross-file
 
 ### Terraform State
 
-Parses `.tfstate` files (100+ resource type mappings across AWS, GCP, Azure, Cloudflare, TLS). Edges come from `dependencies` arrays and attribute references (vpc_id, subnet_id, etc.). Node IDs: `tf:<assetType>:<name>`.
+Parses `.tfstate` files (100+ resource type mappings across AWS, GCP, Azure, Cloudflare, TLS). Edges come from `dependencies` arrays and attribute references (vpc_id, subnet_id, etc.). Dependency edges include `source=tfstate_dependency` and `reference` metadata; attribute edges include `via` and `raw_value`. Node IDs: `tf:<assetType>:<name>`.
 
 ```bash
 aib scan terraform terraform.tfstate
@@ -58,7 +58,9 @@ aib scan terraform-plan infra-plan.json services-plan.json
 
 ### Kubernetes / Helm
 
-Scans YAML manifests or Helm charts. Discovers workloads, services, ingresses, secrets, configmaps and their relationships (label selector matching, TLS termination, volume mounts, envFrom refs). Node IDs: `k8s:<assetType>:<namespace>/<name>`.
+Scans YAML manifests or Helm charts. Discovers workloads, services, ingresses, secrets, configmaps and their relationships (label selector matching, TLS termination, volume mounts, envFrom refs).
+
+Also infers workload interconnectivity (`connects_to`) from application config values (for example service URLs/hosts found in env vars and ConfigMap values), so app-to-service dependencies are visible even when they are expressed only as runtime connection strings. Node IDs: `k8s:<assetType>:<namespace>/<name>`.
 
 ```bash
 aib scan k8s deployment.yaml
@@ -72,7 +74,11 @@ aib scan k8s --live --kubeconfig=~/.kube/config --context=prod --namespace=app
 
 ### Ansible
 
-Parses inventory files (INI/YAML) to discover hosts. With `--playbooks`, also discovers containers and services from `docker_container` and `service` tasks. Node IDs: `ansible:<assetType>:<hostname>`.
+Parses inventory files (INI/YAML) to discover hosts. With `--playbooks`, also discovers containers and services from `docker_container` and `service` tasks.
+
+Inventory var inference also builds interconnectivity edges between hosts and dependent services/databases (for example `db_host`, `redis_host`, `k8s_service`). When possible, inferred database/service nodes include `connection_string` metadata (e.g. PostgreSQL/Redis) so app-to-data paths are explicit in both CLI and UI.
+
+Node IDs: `ansible:<assetType>:<hostname>`.
 
 ```bash
 aib scan ansible inventory.ini
@@ -81,7 +87,7 @@ aib scan ansible staging.ini production.ini --playbooks=./playbooks/
 
 ### Docker Compose
 
-Parses Docker Compose files to discover services, networks, and volumes with their dependency relationships (depends_on, network membership, volume mounts). Node IDs: `compose:<assetType>:<name>`.
+Parses Docker Compose files to discover services, networks, and volumes with their dependency relationships (depends_on, network membership, volume mounts). Edges carry connection evidence metadata (`via`, `raw_value`) so the UI and API show exactly how each relationship was discovered. Node IDs: `compose:<assetType>:<name>`.
 
 ```bash
 aib scan compose docker-compose.yml
@@ -90,7 +96,7 @@ aib scan compose docker-compose.yml docker-compose.override.yml
 
 ### CloudFormation
 
-Parses AWS CloudFormation templates (YAML/JSON, ~40 resource type mappings). Edges from DependsOn, Ref, Fn::GetAtt, and property references (VpcId, SubnetId, SecurityGroupIds). Node IDs: `cfn:<assetType>:<logicalId>`.
+Parses AWS CloudFormation templates (YAML/JSON, ~40 resource type mappings). Edges from DependsOn, Ref, Fn::GetAtt, and property references (VpcId, SubnetId, SecurityGroupIds). Each edge includes `via` and `raw_value` metadata distinguishing DependsOn vs Ref provenance. Node IDs: `cfn:<assetType>:<logicalId>`.
 
 ```bash
 aib scan cloudformation template.yaml
@@ -99,7 +105,7 @@ aib scan cloudformation vpc.yaml compute.yaml database.json
 
 ### Pulumi
 
-Parses `pulumi stack export` JSON output (~80 resource type mappings across AWS, GCP, Azure, Kubernetes, TLS). Edges from dependency arrays, attribute references, and parent URNs. Node IDs: `plm:<assetType>:<name>`.
+Parses `pulumi stack export` JSON output (~80 resource type mappings across AWS, GCP, Azure, Kubernetes, TLS). Edges from dependency arrays, attribute references, and parent URNs. Attribute edges carry `via` and `raw_value` metadata (e.g. `via=vpcId`, `raw_value=vpc-abc123`). Node IDs: `plm:<assetType>:<name>`.
 
 ```bash
 aib scan pulumi stack-export.json
@@ -179,7 +185,24 @@ aib serve --listen=:9090                   # custom port
 aib serve --read-only                      # disable scan triggers
 ```
 
-The web UI provides interactive graph visualization with search, type/source filtering, blast radius highlighting, and focus modes. API docs are available at `/api/docs` (Swagger UI).
+The web UI provides interactive graph visualization with search, type/source filtering, blast radius highlighting, and focus modes.
+
+Recent UI capabilities include:
+
+- resource-focused left sidebar with source grouping and quick source-only filtering
+- declutter toggle and selectable layout modes (readable/balanced/compact)
+- resizable left and right side panels
+- larger typography for improved readability
+- connection-string-aware detail rendering with one-click `Copy` actions
+- **Connection Evidence** section on edges showing how each relationship was discovered (`via`, `raw_value`, `reference`) with All/connects_to filter
+- **Online Icons** toggle (consent-gated) that fetches service/provider icons from [Simple Icons](https://simpleicons.org/) CDN and overlays them on graph nodes (Kubernetes, Terraform, Docker, Redis, PostgreSQL, Ansible, etc.)
+- Graph Focus panel with Dependencies, Impact, Find Secrets Path, and Find External Path modes
+
+API docs are available at `/api/docs` (Swagger UI).
+
+### External CLI Timeouts
+
+For parser paths that call external tools (`kubectl`, `helm`, `terraform`), AIB applies a default command timeout when no deadline is provided by the caller. This improves robustness in CI and prevents long-running scans from hanging indefinitely.
 
 ### API Endpoints
 
@@ -232,7 +255,7 @@ server:
 
 Auth applies to `/api/*` routes only. The web UI, static assets, `/healthz`, and `/metrics` are always accessible.
 
-AIB is designed for trusted internal networks. The server includes security headers, rate limiting (10 req/s per IP), request body limits (1 MB), path traversal protection, and a scan path allowlist (`scan.allowed_paths`). Do not expose to the public internet without a reverse proxy and TLS.
+AIB is designed for trusted internal networks. The server includes security headers (CSP with strict `default-src 'self'`, allowlisted CDN origins for icons), rate limiting (10 req/s per IP), request body limits (1 MB), path traversal protection, and a scan path allowlist (`scan.allowed_paths`). Do not expose to the public internet without a reverse proxy and TLS.
 
 ## Configuration
 

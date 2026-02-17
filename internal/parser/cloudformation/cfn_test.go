@@ -90,13 +90,22 @@ func TestParseCFN_Edges(t *testing.T) {
 	}
 
 	// MyInstance -> MyBucket (DependsOn)
-	if _, ok := edgeMap["depends_on:cfn:vm:MyInstance->cfn:bucket:MyBucket"]; !ok {
+	if e, ok := edgeMap["depends_on:cfn:vm:MyInstance->cfn:bucket:MyBucket"]; !ok {
 		t.Error("missing edge: MyInstance -> MyBucket (DependsOn)")
+	} else {
+		if e.Metadata["via"] != "DependsOn" {
+			t.Errorf("DependsOn edge via = %q, want \"DependsOn\"", e.Metadata["via"])
+		}
+		if e.Metadata["raw_value"] != "MyBucket" {
+			t.Errorf("DependsOn edge raw_value = %q, want \"MyBucket\"", e.Metadata["raw_value"])
+		}
 	}
 
-	// MyInstance -> MySubnet (Ref)
-	if _, ok := edgeMap["depends_on:cfn:vm:MyInstance->cfn:subnet:MySubnet"]; !ok {
-		t.Error("missing edge: MyInstance -> MySubnet (Ref)")
+	// MySubnet -> MyVPC (Ref) should have via=Ref
+	if e, ok := edgeMap["depends_on:cfn:subnet:MySubnet->cfn:network:MyVPC"]; !ok {
+		t.Error("missing edge: MySubnet -> MyVPC (Ref)")
+	} else if e.Metadata["via"] != "Ref" {
+		t.Errorf("Ref edge via = %q, want \"Ref\"", e.Metadata["via"])
 	}
 
 	// MyInstance -> MySecurityGroup (Ref)

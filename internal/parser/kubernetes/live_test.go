@@ -82,6 +82,26 @@ items:
 	}
 }
 
+func TestFetchLive_AppliesDefaultTimeoutWhenMissingDeadline(t *testing.T) {
+	originalLookPath := kubectlLookPath
+	originalListNamespaces := listNamespacesFn
+	kubectlLookPath = func(string) (string, error) {
+		return "/usr/bin/kubectl", nil
+	}
+	listNamespacesFn = func(ctx context.Context, _, _ string) ([]string, error) {
+		if _, ok := ctx.Deadline(); !ok {
+			t.Fatal("expected deadline on context passed to listNamespaces")
+		}
+		return nil, context.DeadlineExceeded
+	}
+	t.Cleanup(func() {
+		kubectlLookPath = originalLookPath
+		listNamespacesFn = originalListNamespaces
+	})
+
+	_, _ = FetchLive(context.Background(), "", "", nil)
+}
+
 func TestBuildKubectlArgs(t *testing.T) {
 	tests := []struct {
 		name       string

@@ -368,7 +368,7 @@ func createAttributeEdges(nodeID string, resourceType string, attrs map[string]a
 		return ""
 	}
 
-	addEdge := func(targetID, via string) {
+	addEdge := func(targetID, via, rawValue string) {
 		if targetID == "" {
 			return
 		}
@@ -377,23 +377,23 @@ func createAttributeEdges(nodeID string, resourceType string, attrs map[string]a
 			FromID:   nodeID,
 			ToID:     targetID,
 			Type:     models.EdgeConnectsTo,
-			Metadata: map[string]string{"via": via},
+			Metadata: map[string]string{"via": via, "raw_value": rawValue},
 		})
 	}
 
 	// Network reference edges
 	if network, ok := attrs["network"].(string); ok && network != "" {
-		addEdge(resolveTarget(network), "network")
+		addEdge(resolveTarget(network), "network", network)
 	}
 
 	// Subnetwork reference edges
 	if subnet, ok := attrs["subnetwork"].(string); ok && subnet != "" {
-		addEdge(resolveTarget(subnet), "subnetwork")
+		addEdge(resolveTarget(subnet), "subnetwork", subnet)
 	}
 
 	// VPC/subnet ID references (AWS style)
 	if vpcID, ok := attrs["vpc_id"].(string); ok && vpcID != "" {
-		addEdge(resolveTarget(vpcID), "vpc_id")
+		addEdge(resolveTarget(vpcID), "vpc_id", vpcID)
 	}
 }
 

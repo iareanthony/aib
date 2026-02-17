@@ -109,6 +109,47 @@ func TestParse(t *testing.T) {
 	}
 }
 
+func TestParse_EdgeMetadata(t *testing.T) {
+	p := NewComposeParser()
+	result, err := p.Parse(context.Background(), "testdata/docker-compose.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	edgeMap := make(map[string]models.Edge)
+	for _, e := range result.Edges {
+		key := e.FromID + "->" + string(e.Type) + "->" + e.ToID
+		edgeMap[key] = e
+	}
+
+	// depends_on edge metadata
+	e := edgeMap["compose:container:web->depends_on->compose:container:api"]
+	if e.Metadata["via"] != "depends_on" {
+		t.Errorf("depends_on edge via = %q, want \"depends_on\"", e.Metadata["via"])
+	}
+	if e.Metadata["raw_value"] != "api" {
+		t.Errorf("depends_on edge raw_value = %q, want \"api\"", e.Metadata["raw_value"])
+	}
+
+	// network connects_to edge metadata
+	e = edgeMap["compose:container:web->connects_to->compose:network:frontend"]
+	if e.Metadata["via"] != "networks" {
+		t.Errorf("network edge via = %q, want \"networks\"", e.Metadata["via"])
+	}
+	if e.Metadata["raw_value"] != "frontend" {
+		t.Errorf("network edge raw_value = %q, want \"frontend\"", e.Metadata["raw_value"])
+	}
+
+	// volume mounts_secret edge metadata
+	e = edgeMap["compose:container:db->mounts_secret->compose:volume:pgdata"]
+	if e.Metadata["via"] != "volumes" {
+		t.Errorf("volume edge via = %q, want \"volumes\"", e.Metadata["via"])
+	}
+	if e.Metadata["raw_value"] == "" {
+		t.Error("volume edge raw_value should not be empty")
+	}
+}
+
 func TestSupported(t *testing.T) {
 	p := NewComposeParser()
 

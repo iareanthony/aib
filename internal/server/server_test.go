@@ -40,6 +40,12 @@ func TestSecurityHeaders(t *testing.T) {
 	if !strings.Contains(csp, "default-src 'self'") {
 		t.Errorf("CSP = %q, want to contain default-src 'self'", csp)
 	}
+	if !strings.Contains(csp, "connect-src 'self' https://cdn.simpleicons.org") {
+		t.Errorf("CSP = %q, want to contain connect-src for simpleicons CDN", csp)
+	}
+	if !strings.Contains(csp, "img-src 'self' data:") {
+		t.Errorf("CSP = %q, want to contain img-src 'self' data:", csp)
+	}
 }
 
 func TestLimitBody_UnderLimit(t *testing.T) {

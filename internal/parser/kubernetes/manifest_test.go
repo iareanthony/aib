@@ -430,3 +430,35 @@ spec:
 		}
 	}
 }
+
+func TestParseManifests_InferServiceConnectivityFromEnv(t *testing.T) {
+	data, err := os.ReadFile("testdata/interconnectivity.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := parseManifests(data, "testdata/interconnectivity.yaml", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	connectsTo := make(map[string]bool)
+	for _, edge := range result.Edges {
+		if edge.Type == models.EdgeConnectsTo {
+			connectsTo[edge.FromID+"->"+edge.ToID] = true
+		}
+	}
+
+	fromID := "k8s:pod:production/api"
+	want := []string{
+		fromID + "->k8s:service:production/redis-svc",
+		fromID + "->k8s:service:production/postgres-svc",
+		fromID + "->k8s:service:production/metrics-svc",
+	}
+
+	for _, edgeKey := range want {
+		if !connectsTo[edgeKey] {
+			t.Errorf("missing inferred connects_to edge %s", edgeKey)
+		}
+	}
+}

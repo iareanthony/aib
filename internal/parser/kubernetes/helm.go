@@ -16,6 +16,9 @@ func RenderHelm(ctx context.Context, chartPath string, valuesFile string) (*pars
 		return nil, fmt.Errorf("helm CLI not found in PATH: %w", err)
 	}
 
+	ctx, cancel := parser.WithDefaultCommandTimeout(ctx)
+	defer cancel()
+
 	args := []string{"template", "release", chartPath}
 	if valuesFile != "" {
 		args = append(args, "-f", valuesFile)

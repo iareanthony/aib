@@ -24,6 +24,9 @@ func pullStateBytes(ctx context.Context, projectDir, workspace string) ([]byte, 
 		return nil, fmt.Errorf("terraform CLI not found in PATH: %w", err)
 	}
 
+	ctx, cancel := parser.WithDefaultCommandTimeout(ctx)
+	defer cancel()
+
 	if workspace != "" {
 		wsCmd := exec.CommandContext(ctx, "terraform", fmt.Sprintf("-chdir=%s", projectDir), "workspace", "select", workspace) // #nosec G204 -- args are constructed internally
 		var wsErr bytes.Buffer
@@ -137,6 +140,9 @@ func ListWorkspaces(ctx context.Context, projectDir string) ([]string, error) {
 	if _, err := exec.LookPath("terraform"); err != nil {
 		return nil, fmt.Errorf("terraform CLI not found in PATH: %w", err)
 	}
+
+	ctx, cancel := parser.WithDefaultCommandTimeout(ctx)
+	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "terraform", fmt.Sprintf("-chdir=%s", projectDir), "workspace", "list") // #nosec G204 -- args are constructed internally
 	var stdout, stderr bytes.Buffer
@@ -269,7 +275,8 @@ func parseStateBytesWithRefs(data []byte, sourcePath string, refToNodeID map[str
 					ToID:   depNodeID,
 					Type:   models.EdgeDependsOn,
 					Metadata: map[string]string{
-						"source": "tfstate_dependency",
+						"source":    "tfstate_dependency",
+						"reference": dep,
 					},
 				})
 			}

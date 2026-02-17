@@ -198,6 +198,35 @@ func TestParsePulumi_AttributeEdges(t *testing.T) {
 	}
 }
 
+func TestParsePulumi_EdgeMetadata(t *testing.T) {
+	p := NewPulumiParser()
+	result, err := p.Parse(context.Background(), filepath.Join("testdata", "simple.json"))
+	if err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+
+	type edgeKey struct{ typ, from, to string }
+	edgeMap := make(map[edgeKey]models.Edge)
+	for _, e := range result.Edges {
+		edgeMap[edgeKey{string(e.Type), e.FromID, e.ToID}] = e
+	}
+
+	// depends_on edge should have via=dependencies
+	e := edgeMap[edgeKey{"depends_on", "plm:subnet:public-subnet", "plm:network:main-vpc"}]
+	if e.Metadata["via"] != "dependencies" {
+		t.Errorf("depends_on edge via = %q, want \"dependencies\"", e.Metadata["via"])
+	}
+
+	// connects_to attribute edge should have via and raw_value
+	e = edgeMap[edgeKey{"connects_to", "plm:subnet:public-subnet", "plm:network:main-vpc"}]
+	if e.Metadata["via"] == "" {
+		t.Error("connects_to edge via should not be empty")
+	}
+	if e.Metadata["raw_value"] == "" {
+		t.Error("connects_to edge raw_value should not be empty")
+	}
+}
+
 func TestParsePulumi_Metadata(t *testing.T) {
 	p := NewPulumiParser()
 	result, err := p.Parse(context.Background(), filepath.Join("testdata", "simple.json"))

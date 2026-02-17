@@ -21,6 +21,9 @@ var (
 // If kubeCtx is empty, the current-context is used.
 // If namespaces is empty, all non-system namespaces are scanned.
 func FetchLive(ctx context.Context, kubeconfig, kubeCtx string, namespaces []string) (*parser.ParseResult, error) {
+	ctx, cancel := parser.WithDefaultCommandTimeout(ctx)
+	defer cancel()
+
 	if _, err := kubectlLookPath("kubectl"); err != nil {
 		return nil, fmt.Errorf("kubectl not found in PATH: %w", err)
 	}

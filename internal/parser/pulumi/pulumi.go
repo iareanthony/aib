@@ -327,7 +327,7 @@ func createPulumiAttributeEdges(nodeID string, inputs map[string]any, refMap map
 		return ""
 	}
 
-	addEdge := func(targetID, via string) {
+	addEdge := func(targetID, via, rawValue string) {
 		if targetID == "" || targetID == nodeID {
 			return
 		}
@@ -339,7 +339,7 @@ func createPulumiAttributeEdges(nodeID string, inputs map[string]any, refMap map
 				FromID:   nodeID,
 				ToID:     targetID,
 				Type:     models.EdgeConnectsTo,
-				Metadata: map[string]string{"via": via},
+				Metadata: map[string]string{"via": via, "raw_value": rawValue},
 			})
 		}
 	}
@@ -352,7 +352,7 @@ func createPulumiAttributeEdges(nodeID string, inputs map[string]any, refMap map
 	}
 	for _, key := range singleKeys {
 		if val, ok := inputs[key].(string); ok && val != "" {
-			addEdge(resolveByName(val), key)
+			addEdge(resolveByName(val), key, val)
 		}
 	}
 
@@ -362,7 +362,7 @@ func createPulumiAttributeEdges(nodeID string, inputs map[string]any, refMap map
 		if arr, ok := inputs[key].([]any); ok {
 			for _, item := range arr {
 				if val, ok := item.(string); ok && val != "" {
-					addEdge(resolveByName(val), key)
+					addEdge(resolveByName(val), key, val)
 				}
 			}
 		}

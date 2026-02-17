@@ -2,6 +2,7 @@ package ansible
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/matijazezelj/aib/pkg/models"
@@ -127,5 +128,84 @@ func TestBuildHostMetadata(t *testing.T) {
 	}
 	if meta["groups"] == "" {
 		t.Error("groups metadata should be set")
+	}
+}
+
+func TestParse_InferredDependenciesFromInventoryVars(t *testing.T) {
+	p := NewAnsibleParser("")
+	result, err := p.Parse(context.Background(), "testdata/inventory_deps.ini")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nodeMap := make(map[string]models.Node)
+	for _, n := range result.Nodes {
+		nodeMap[n.ID] = n
+	}
+
+	if _, ok := nodeMap["ansible:vm:web1"]; !ok {
+		t.Fatal("missing ansible:vm:web1")
+	}
+	if _, ok := nodeMap["ansible:vm:web2"]; !ok {
+		t.Fatal("missing ansible:vm:web2")
+	}
+	if _, ok := nodeMap["ansible:vm:db1"]; !ok {
+		t.Fatal("missing ansible:vm:db1")
+	}
+
+	redisNode, ok := nodeMap["k8s:service:production/redis-svc"]
+	if !ok {
+		t.Fatal("missing inferred k8s redis service node")
+	}
+	if redisNode.Type != models.AssetService {
+		t.Errorf("redis node type = %q, want service", redisNode.Type)
+	}
+	if redisNode.Metadata["connection_string"] == "" {
+		t.Fatal("expected inferred redis connection_string metadata on service node")
+	}
+	if !strings.HasPrefix(redisNode.Metadata["connection_string"], "redis://") {
+		t.Errorf("redis connection_string = %q, want prefix \"redis://\"", redisNode.Metadata["connection_string"])
+	}
+	if !strings.Contains(redisNode.Metadata["connection_string"], "svc.cluster.local") {
+		t.Errorf("redis connection_string = %q, want to contain svc.cluster.local", redisNode.Metadata["connection_string"])
+	}
+
+	dbNode, ok := nodeMap["ansible:database:exampledb@db1"]
+	if !ok {
+		t.Fatal("missing inferred database node exampledb@db1")
+	}
+	if dbNode.Type != models.AssetDatabase {
+		t.Errorf("database node type = %q, want database", dbNode.Type)
+	}
+	if dbNode.Metadata["connection_string"] == "" {
+		t.Fatal("expected inferred connection_string metadata on database node")
+	}
+	if dbNode.Metadata["db_host"] != "db1" {
+		t.Errorf("db_host metadata = %q, want db1", dbNode.Metadata["db_host"])
+	}
+
+	hasEdge := func(from, to string, edgeType models.EdgeType) bool {
+		for _, e := range result.Edges {
+			if e.FromID == from && e.ToID == to && e.Type == edgeType {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !hasEdge("ansible:vm:web1", "ansible:database:exampledb@db1", models.EdgeDependsOn) {
+		t.Error("missing web1 -> exampledb@db1 depends_on edge")
+	}
+	if !hasEdge("ansible:vm:web2", "ansible:database:exampledb@db1", models.EdgeDependsOn) {
+		t.Error("missing web2 -> exampledb@db1 depends_on edge")
+	}
+	if !hasEdge("ansible:database:exampledb@db1", "ansible:vm:db1", models.EdgeConnectsTo) {
+		t.Error("missing inferred database -> db1 host binding edge")
+	}
+	if !hasEdge("ansible:vm:web1", "k8s:service:production/redis-svc", models.EdgeConnectsTo) {
+		t.Error("missing web1 -> k8s redis connects_to edge")
+	}
+	if !hasEdge("ansible:vm:web2", "k8s:service:production/redis-svc", models.EdgeConnectsTo) {
+		t.Error("missing web2 -> k8s redis connects_to edge")
 	}
 }

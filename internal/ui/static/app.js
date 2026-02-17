@@ -45,6 +45,184 @@ let graphData;
 let privacyMode = localStorage.getItem('privacyMode') === 'true';
 let selectedNodeId = null;
 let disabledEdgeTypes = new Set();
+let declutterMode = localStorage.getItem('declutterMode') === 'true';
+let focusedResourceId = '';
+let focusedResourceNodes = null;
+let focusedSourceKey = '';
+let evidenceFilterMode = 'all';
+let onlineIconsEnabled = false;
+
+const ICON_CDN_BASE = 'https://cdn.simpleicons.org';
+const iconDataCache = new Map();
+
+const DETAIL_PANEL_WIDTH_KEY = 'detailPanelWidth';
+const RESOURCE_PANEL_WIDTH_KEY = 'resourcePanelWidth';
+const PANEL_DEFAULT_RATIO = 0.10;
+const DETAIL_PANEL_MIN_WIDTH = 140;
+const RESOURCE_PANEL_MIN_WIDTH = 140;
+
+function getPanelDefaultWidth() {
+    return Math.floor(window.innerWidth * PANEL_DEFAULT_RATIO);
+}
+
+function getResourcePanelMaxWidth() {
+    return Math.max(RESOURCE_PANEL_MIN_WIDTH, Math.floor(window.innerWidth * 0.45));
+}
+
+function clampResourcePanelWidth(width) {
+    return Math.min(getResourcePanelMaxWidth(), Math.max(RESOURCE_PANEL_MIN_WIDTH, width));
+}
+
+function applyResourcePanelWidth(width) {
+    const panel = document.getElementById('resource-panel');
+    if (!panel) return;
+    panel.style.width = `${clampResourcePanelWidth(width)}px`;
+}
+
+function getDetailPanelMaxWidth() {
+    return Math.max(DETAIL_PANEL_MIN_WIDTH, Math.floor(window.innerWidth * 0.45));
+}
+
+function clampDetailPanelWidth(width) {
+    return Math.min(getDetailPanelMaxWidth(), Math.max(DETAIL_PANEL_MIN_WIDTH, width));
+}
+
+function applyDetailPanelWidth(width) {
+    const panel = document.getElementById('detail-panel');
+    if (!panel) return;
+    panel.style.width = `${clampDetailPanelWidth(width)}px`;
+}
+
+function initDetailPanelResizer() {
+    const panel = document.getElementById('detail-panel');
+    const handle = document.getElementById('detail-resizer');
+    if (!panel || !handle) return;
+
+    const saved = parseInt(localStorage.getItem(DETAIL_PANEL_WIDTH_KEY) || String(getPanelDefaultWidth()), 10);
+    if (!Number.isNaN(saved)) {
+        applyDetailPanelWidth(saved);
+    }
+
+    let dragging = false;
+
+    handle.addEventListener('mousedown', (evt) => {
+        evt.preventDefault();
+        dragging = true;
+        document.body.classList.add('resizing-panel');
+    });
+
+    window.addEventListener('mousemove', (evt) => {
+        if (!dragging) return;
+        const viewportWidth = window.innerWidth;
+        const width = viewportWidth - evt.clientX;
+        const clamped = clampDetailPanelWidth(width);
+        panel.style.width = `${clamped}px`;
+    });
+
+    const stopDragging = () => {
+        if (!dragging) return;
+        dragging = false;
+        document.body.classList.remove('resizing-panel');
+        const width = parseInt(panel.style.width || '360', 10);
+        if (!Number.isNaN(width)) {
+            localStorage.setItem(DETAIL_PANEL_WIDTH_KEY, String(clampDetailPanelWidth(width)));
+        }
+    };
+
+    window.addEventListener('mouseup', stopDragging);
+    window.addEventListener('blur', stopDragging);
+    window.addEventListener('resize', () => {
+        const width = parseInt(panel.style.width || '360', 10);
+        if (!Number.isNaN(width)) applyDetailPanelWidth(width);
+    });
+}
+
+function initResourcePanelResizer() {
+    const panel = document.getElementById('resource-panel');
+    const handle = document.getElementById('resource-resizer');
+    if (!panel || !handle) return;
+
+    const saved = parseInt(localStorage.getItem(RESOURCE_PANEL_WIDTH_KEY) || String(getPanelDefaultWidth()), 10);
+    if (!Number.isNaN(saved)) {
+        applyResourcePanelWidth(saved);
+    }
+
+    let dragging = false;
+
+    handle.addEventListener('mousedown', (evt) => {
+        evt.preventDefault();
+        dragging = true;
+        document.body.classList.add('resizing-panel');
+    });
+
+    window.addEventListener('mousemove', (evt) => {
+        if (!dragging) return;
+        const width = evt.clientX;
+        const clamped = clampResourcePanelWidth(width);
+        panel.style.width = `${clamped}px`;
+    });
+
+    const stopDragging = () => {
+        if (!dragging) return;
+        dragging = false;
+        document.body.classList.remove('resizing-panel');
+        const width = parseInt(panel.style.width || String(getPanelDefaultWidth()), 10);
+        if (!Number.isNaN(width)) {
+            localStorage.setItem(RESOURCE_PANEL_WIDTH_KEY, String(clampResourcePanelWidth(width)));
+        }
+    };
+
+    window.addEventListener('mouseup', stopDragging);
+    window.addEventListener('blur', stopDragging);
+    window.addEventListener('resize', () => {
+        const width = parseInt(panel.style.width || String(getPanelDefaultWidth()), 10);
+        if (!Number.isNaN(width)) applyResourcePanelWidth(width);
+    });
+}
+
+const SOURCE_ORDER = ['k8s', 'terraform', 'terraform-plan', 'cloudformation', 'pulumi', 'compose', 'ansible'];
+
+function normalizeSourceKey(src) {
+    if (!src) return 'unknown';
+    if (src === 'kubernetes' || src === 'kubernetes-live') return 'k8s';
+    return src;
+}
+
+const LAYOUTS = {
+    readable: {
+        name: 'cose',
+        animate: false,
+        nodeRepulsion: () => 22000,
+        idealEdgeLength: () => 180,
+        nodeOverlap: 24,
+        padding: 56,
+        componentSpacing: 110,
+        nestingFactor: 1.25,
+        gravity: 0.3,
+    },
+    balanced: {
+        name: 'cose',
+        animate: false,
+        nodeRepulsion: () => 16000,
+        idealEdgeLength: () => 140,
+        nodeOverlap: 20,
+        padding: 40,
+        componentSpacing: 60,
+        nestingFactor: 1.2,
+        gravity: 0.3,
+    },
+    compact: {
+        name: 'cose',
+        animate: false,
+        nodeRepulsion: () => 12000,
+        idealEdgeLength: () => 110,
+        nodeOverlap: 16,
+        padding: 28,
+        componentSpacing: 40,
+        nestingFactor: 1.1,
+        gravity: 0.35,
+    },
+};
 
 function esc(str) {
     const d = document.createElement('div');
@@ -98,8 +276,7 @@ function buildEdgeFilterPills() {
             } else {
                 disabledEdgeTypes.delete(type);
             }
-            applyEdgeTypeFilter();
-            updateVisibleCount();
+            applyNodeVisibilityFilters();
         });
         container.appendChild(pill);
     });
@@ -109,6 +286,212 @@ function applyEdgeTypeFilter() {
     cy.edges().forEach(e => {
         e.toggleClass('dimmed', disabledEdgeTypes.has(e.data('label')));
     });
+}
+
+function computeConnectedResourceSet(startId) {
+    const visited = new Set([startId]);
+    const queue = [startId];
+
+    while (queue.length > 0) {
+        const current = queue.shift();
+        (graphData.edges || []).forEach(e => {
+            let next = null;
+            if (e.from_id === current) next = e.to_id;
+            else if (e.to_id === current) next = e.from_id;
+            if (next && !visited.has(next)) {
+                visited.add(next);
+                queue.push(next);
+            }
+        });
+    }
+
+    return visited;
+}
+
+function setFocusedResource(nodeId) {
+    focusedResourceId = nodeId || '';
+    focusedResourceNodes = focusedResourceId ? computeConnectedResourceSet(focusedResourceId) : null;
+
+    document.querySelectorAll('#resource-panel-list .group-item').forEach(row => {
+        row.classList.toggle('active', row.dataset.nodeId === focusedResourceId);
+    });
+
+    applyNodeVisibilityFilters();
+}
+
+function setFocusedSource(sourceKey) {
+    focusedSourceKey = sourceKey || '';
+    if (focusedSourceKey) {
+        setFocusedResource('');
+    } else {
+        document.querySelectorAll('#resource-panel-list .resource-section').forEach(section => {
+            section.classList.remove('active-source');
+        });
+        applyNodeVisibilityFilters();
+    }
+
+    document.querySelectorAll('#resource-panel-list .resource-section').forEach(section => {
+        section.classList.toggle('active-source', section.dataset.source === focusedSourceKey);
+    });
+}
+
+function renderResourcePanel() {
+    const list = document.getElementById('resource-panel-list');
+    list.innerHTML = '';
+
+    const sourceBuckets = new Map();
+    (graphData.nodes || []).forEach(node => {
+        const sourceKey = normalizeSourceKey(node.source);
+        if (!sourceBuckets.has(sourceKey)) sourceBuckets.set(sourceKey, []);
+        sourceBuckets.get(sourceKey).push(node);
+    });
+
+    const sourceKeys = Array.from(sourceBuckets.keys()).sort((a, b) => {
+        const ai = SOURCE_ORDER.indexOf(a);
+        const bi = SOURCE_ORDER.indexOf(b);
+        if (ai !== -1 && bi !== -1) return ai - bi;
+        if (ai !== -1) return -1;
+        if (bi !== -1) return 1;
+        return a.localeCompare(b);
+    });
+
+    sourceKeys.forEach(sourceKey => {
+        const section = document.createElement('div');
+        section.className = 'resource-section';
+        section.dataset.source = sourceKey;
+
+        const sectionTitle = document.createElement('div');
+        sectionTitle.className = 'resource-section-title';
+        sectionTitle.textContent = `${sourceKey} (${sourceBuckets.get(sourceKey).length})`;
+        sectionTitle.title = `Show only ${sourceKey}`;
+        sectionTitle.addEventListener('click', () => {
+            if (focusedSourceKey === sourceKey) setFocusedSource('');
+            else setFocusedSource(sourceKey);
+        });
+        section.appendChild(sectionTitle);
+
+        const sectionList = document.createElement('div');
+        sectionList.className = 'resource-section-list';
+
+        const nodes = sourceBuckets.get(sourceKey)
+            .slice()
+            .sort((a, b) => (a.name || '').localeCompare(b.name || '') || a.id.localeCompare(b.id));
+
+        nodes.forEach(node => {
+            const row = document.createElement('div');
+            row.className = 'group-item';
+            row.dataset.nodeId = node.id;
+            row.dataset.source = sourceKey;
+
+            const label = document.createElement('label');
+            label.style.cursor = 'pointer';
+
+            const name = document.createElement('span');
+            name.className = 'group-name';
+            name.textContent = node.name || node.id;
+
+            const meta = document.createElement('span');
+            meta.className = 'group-count';
+            meta.textContent = node.type || '';
+
+            label.appendChild(name);
+            row.appendChild(label);
+            row.appendChild(meta);
+
+            row.addEventListener('click', () => {
+                if (focusedResourceId === node.id) setFocusedResource('');
+                else setFocusedResource(node.id);
+            });
+
+            sectionList.appendChild(row);
+        });
+
+        section.appendChild(sectionList);
+        list.appendChild(section);
+    });
+
+    document.querySelectorAll('#resource-panel-list .resource-section').forEach(section => {
+        section.classList.toggle('active-source', section.dataset.source === focusedSourceKey);
+    });
+}
+
+function applyResourceSearchFilter() {
+    const q = (document.getElementById('resource-search').value || '').toLowerCase();
+    document.querySelectorAll('#resource-panel-list .group-item').forEach(row => {
+        const text = row.textContent.toLowerCase();
+        row.style.display = (!q || text.includes(q)) ? '' : 'none';
+    });
+
+    document.querySelectorAll('#resource-panel-list .resource-section').forEach(section => {
+        const visibleRows = section.querySelectorAll('.group-item:not([style*="display: none"])').length;
+        section.style.display = visibleRows > 0 ? '' : 'none';
+    });
+}
+
+function applyNodeVisibilityFilters() {
+    if (!cy) return;
+
+    const q = (document.getElementById('search').value || '').toLowerCase();
+    const type = document.getElementById('filter-type').value;
+    const source = document.getElementById('filter-source').value;
+
+    cy.nodes('[!isGroup]').forEach(n => {
+        const id = (n.data('id') || '').toLowerCase();
+        const label = (n.data('label') || '').toLowerCase();
+        const matchQuery = !q || label.includes(q) || id.includes(q);
+        const matchType = !type || n.data('assetType') === type;
+        const matchSource = !source || n.data('source') === source;
+        const matchFocused = !focusedResourceNodes || focusedResourceNodes.has(n.data('id'));
+        const nodeRaw = (graphData.nodes || []).find(x => x.id === n.data('id'));
+        const normalizedSource = nodeRaw ? normalizeSourceKey(nodeRaw.source) : 'unknown';
+        const matchFocusedSource = !focusedSourceKey || normalizedSource === focusedSourceKey;
+
+        n.toggleClass('dimmed', !(matchQuery && matchType && matchSource && matchFocused && matchFocusedSource));
+    });
+
+    cy.edges().forEach(e => {
+        const sourceNode = cy.getElementById(e.data('source'));
+        const targetNode = cy.getElementById(e.data('target'));
+        const endpointHidden = (sourceNode && sourceNode.hasClass('dimmed')) || (targetNode && targetNode.hasClass('dimmed'));
+        const edgeTypeDisabled = disabledEdgeTypes.has(e.data('label'));
+        e.toggleClass('dimmed', endpointHidden || edgeTypeDisabled);
+    });
+
+    updateVisibleCount();
+}
+
+function getLayoutMode() {
+    const sel = document.getElementById('layout-mode');
+    if (!sel) return 'readable';
+    return sel.value || 'readable';
+}
+
+function runCurrentLayout() {
+    const mode = getLayoutMode();
+    const cfg = LAYOUTS[mode] || LAYOUTS.readable;
+    cy.layout(cfg).run();
+}
+
+function applyDeclutterMode() {
+    if (!cy) return;
+
+    cy.batch(() => {
+        cy.nodes('[!isGroup]').removeClass('decluttered-isolated');
+        cy.edges().removeClass('decluttered-edge');
+        if (!declutterMode) return;
+
+        cy.nodes('[!isGroup]').forEach(n => {
+            if (n.connectedEdges().length === 0) {
+                n.addClass('decluttered-isolated');
+            }
+        });
+        cy.edges().addClass('decluttered-edge');
+    });
+
+    const btn = document.getElementById('btn-declutter');
+    if (btn) btn.classList.toggle('active', declutterMode);
+    localStorage.setItem('declutterMode', String(declutterMode));
+    updateVisibleCount();
 }
 
 // --- Privacy Mode ---
@@ -124,6 +507,8 @@ function togglePrivacyMode() {
     privacyMode = !privacyMode;
     localStorage.setItem('privacyMode', privacyMode);
     document.getElementById('btn-privacy').classList.toggle('active', privacyMode);
+    document.getElementById('btn-declutter').classList.toggle('active', declutterMode);
+    document.getElementById('layout-mode').value = localStorage.getItem('layoutMode') || 'readable';
     cy.style().update();
     // Re-render detail panel if open
     if (selectedNodeId) showDetail(selectedNodeId);
@@ -134,6 +519,144 @@ function maskDetailValue(key, value) {
     const sensitiveKeys = new Set(['id', 'name', 'arn', 'dns_name', 'hostname', 'ip', 'endpoint']);
     if (sensitiveKeys.has(key.toLowerCase())) return esc(maskSensitive(String(value)));
     return esc(value);
+}
+
+function iconURL(slug) {
+    return `${ICON_CDN_BASE}/${slug}/c9d1d9`;
+}
+
+function resolveNodeIconSlug(nodeData) {
+    const type = String(nodeData.assetType || nodeData.type || '').toLowerCase();
+    const source = String(nodeData.source || '').toLowerCase();
+    const provider = String(nodeData.provider || '').toLowerCase();
+    const label = String(nodeData.label || nodeData.name || '').toLowerCase();
+
+    if (label.includes('redis') || provider.includes('redis')) return 'redis';
+    if (label.includes('postgres') || provider.includes('postgres')) return 'postgresql';
+    if (label.includes('mysql') || provider.includes('mysql')) return 'mysql';
+    if (label.includes('mongo') || provider.includes('mongo')) return 'mongodb';
+    if (label.includes('nginx')) return 'nginx';
+
+    if (source.includes('kubernetes') || source === 'k8s' || provider.includes('kubernetes')) return 'kubernetes';
+    if (source.includes('terraform') || provider.includes('terraform')) return 'terraform';
+    if (source.includes('pulumi') || provider.includes('pulumi')) return 'pulumi';
+    if (source.includes('ansible') || provider.includes('ansible')) return 'ansible';
+    if (source.includes('compose') || provider.includes('docker') || type === 'container') return 'docker';
+    if (source.includes('cloudformation') || provider.includes('aws')) return '';
+
+    if (provider.includes('gcp') || provider.includes('google')) return 'googlecloud';
+    if (provider.includes('azure')) return '';
+
+    if (type === 'database') return 'postgresql';
+    if (type === 'service') return 'kubernetes';
+
+    return '';
+}
+
+function getNodeIconURL(nodeData) {
+    const slug = resolveNodeIconSlug(nodeData);
+    if (!slug) return '';
+    return slug;
+}
+
+async function fetchIconDataURI(slug) {
+    if (!slug) return '';
+    if (iconDataCache.has(slug)) return iconDataCache.get(slug);
+
+    try {
+        const resp = await fetch(iconURL(slug));
+        if (!resp.ok) {
+            iconDataCache.set(slug, '');
+            return '';
+        }
+        const svg = await resp.text();
+        const dataURI = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
+        iconDataCache.set(slug, dataURI);
+        return dataURI;
+    } catch {
+        iconDataCache.set(slug, '');
+        return '';
+    }
+}
+
+async function applyOnlineIcons() {
+    if (!cy) return;
+
+    const btn = document.getElementById('btn-online-icons');
+
+    if (!onlineIconsEnabled) {
+        // Remove per-node style overrides so stylesheet defaults take over
+        cy.nodes('[!isGroup]').forEach((node) => {
+            node.removeStyle('background-image background-image-opacity');
+        });
+        if (btn) btn.classList.remove('active');
+        return;
+    }
+
+    // Collect unique slugs
+    const slugs = new Set();
+    cy.nodes('[!isGroup]').forEach((node) => {
+        const slug = getNodeIconURL(node.data());
+        if (slug) slugs.add(slug);
+    });
+    // Fetch all icons in parallel
+    await Promise.all(Array.from(slugs).map((slug) => fetchIconDataURI(slug)));
+
+    // Apply cached data URIs as direct style overrides
+    cy.batch(() => {
+        cy.nodes('[!isGroup]').forEach((node) => {
+            const slug = getNodeIconURL(node.data());
+            const dataURI = slug ? (iconDataCache.get(slug) || '') : '';
+            if (dataURI) {
+                node.style({
+                    'background-image': dataURI,
+                    'background-image-opacity': 1,
+                    'background-image-containment': 'inside',
+                    'background-fit': 'contain',
+                    'background-width': '62%',
+                    'background-height': '62%',
+                });
+            }
+        });
+    });
+
+    if (btn) btn.classList.toggle('active', onlineIconsEnabled);
+}
+
+function isConnectionStringKey(key) {
+    const lowered = String(key || '').toLowerCase();
+    return (
+        lowered === 'connection_string' ||
+        lowered === 'database_url' ||
+        lowered === 'db_url' ||
+        lowered === 'redis_url' ||
+        lowered.endsWith('_url') ||
+        lowered.endsWith('_dsn')
+    );
+}
+
+function looksLikeConnectionString(value) {
+    const raw = String(value == null ? '' : value).trim();
+    if (!raw) return false;
+    return /^[a-z][a-z0-9+.-]*:\/\//i.test(raw);
+}
+
+async function copyTextToClipboard(text) {
+    const raw = String(text == null ? '' : text);
+    if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(raw);
+        return;
+    }
+
+    const temp = document.createElement('textarea');
+    temp.value = raw;
+    temp.style.position = 'fixed';
+    temp.style.left = '-9999px';
+    document.body.appendChild(temp);
+    temp.focus();
+    temp.select();
+    document.execCommand('copy');
+    document.body.removeChild(temp);
 }
 
 // --- Init ---
@@ -152,6 +675,10 @@ async function init() {
 
     // Privacy button initial state
     document.getElementById('btn-privacy').classList.toggle('active', privacyMode);
+    document.getElementById('btn-online-icons').classList.toggle('active', onlineIconsEnabled);
+
+    initResourcePanelResizer();
+    initDetailPanelResizer();
 
     // Populate filter dropdowns
     const types = new Set((graphData.nodes || []).map(n => n.type));
@@ -163,6 +690,8 @@ async function init() {
 
     // Build edge filter pills
     buildEdgeFilterPills();
+    renderResourcePanel();
+    applyResourceSearchFilter();
 
     // Build Cytoscape elements
     const elements = buildElements(graphData, '');
@@ -178,7 +707,10 @@ async function init() {
                     'shape': el => TYPE_SHAPES[el.data('assetType')] || 'ellipse',
                     'background-color': el => TYPE_COLORS[el.data('assetType')] || '#D5D8DC',
                     'color': '#c9d1d9',
-                    'font-size': '10px',
+                    'font-size': '14px',
+                    'text-background-color': '#0d1117',
+                    'text-background-opacity': 0.72,
+                    'text-background-padding': 2,
                     'text-valign': 'bottom',
                     'text-margin-y': 4,
                     'width': 34, 'height': 34,
@@ -195,7 +727,7 @@ async function init() {
                     'border-color': '#30363d',
                     'label': 'data(label)',
                     'color': '#8b949e',
-                    'font-size': '12px',
+                    'font-size': '14px',
                     'text-valign': 'top',
                     'text-halign': 'center',
                     'text-margin-y': -8,
@@ -205,9 +737,10 @@ async function init() {
                 selector: 'edge',
                 style: {
                     'label': 'data(label)',
-                    'font-size': '8px',
+                    'font-size': '11px',
                     'color': '#8b949e',
                     'text-opacity': 0,
+                    'opacity': 0.55,
                     'line-color': '#30363d',
                     'target-arrow-color': '#30363d',
                     'target-arrow-shape': 'triangle',
@@ -244,19 +777,25 @@ async function init() {
                 selector: '.labels-hidden',
                 style: { 'label': '' },
             },
+            {
+                selector: '.decluttered-edge',
+                style: {
+                    'opacity': 0.22,
+                    'text-opacity': 0,
+                },
+            },
+            {
+                selector: '.decluttered-isolated',
+                style: {
+                    'opacity': 0.16,
+                    'label': '',
+                },
+            },
         ],
-        layout: {
-            name: 'cose',
-            animate: false,
-            nodeRepulsion: () => 16000,
-            idealEdgeLength: () => 140,
-            nodeOverlap: 20,
-            padding: 40,
-            componentSpacing: 60,
-            nestingFactor: 1.2,
-            gravity: 0.3,
-        },
+        layout: LAYOUTS[getLayoutMode()] || LAYOUTS.readable,
     });
+
+    applyDeclutterMode();
 
     // Update visible count after initial build
     updateVisibleCount();
@@ -295,32 +834,37 @@ async function init() {
     document.addEventListener('click', () => hideContextMenu());
 
     // Search
-    document.getElementById('search').addEventListener('input', (e) => {
-        const q = e.target.value.toLowerCase();
-        cy.nodes('[!isGroup]').forEach(n => {
-            const match = !q || n.data('label').toLowerCase().includes(q) || n.data('id').toLowerCase().includes(q);
-            n.toggleClass('dimmed', !match);
-        });
-        updateVisibleCount();
-    });
+    document.getElementById('search').addEventListener('input', applyNodeVisibilityFilters);
 
     // Filters
-    const applyFilters = () => {
-        const type = document.getElementById('filter-type').value;
-        const source = document.getElementById('filter-source').value;
-        cy.nodes('[!isGroup]').forEach(n => {
-            const matchType = !type || n.data('assetType') === type;
-            const matchSource = !source || n.data('source') === source;
-            n.toggleClass('dimmed', !(matchType && matchSource));
+    typeSelect.addEventListener('change', applyNodeVisibilityFilters);
+    sourceSelect.addEventListener('change', applyNodeVisibilityFilters);
+
+    // Resource panel controls
+    document.getElementById('btn-resource-all').addEventListener('click', () => {
+        focusedSourceKey = '';
+        setFocusedResource('');
+        document.querySelectorAll('#resource-panel-list .resource-section').forEach(section => {
+            section.classList.remove('active-source');
         });
-        updateVisibleCount();
-    };
-    typeSelect.addEventListener('change', applyFilters);
-    sourceSelect.addEventListener('change', applyFilters);
+        applyNodeVisibilityFilters();
+    });
+    document.getElementById('resource-search').addEventListener('input', applyResourceSearchFilter);
+
+    document.getElementById('layout-mode').addEventListener('change', (e) => {
+        localStorage.setItem('layoutMode', e.target.value || 'readable');
+        runCurrentLayout();
+    });
+
+    document.getElementById('btn-declutter').addEventListener('click', () => {
+        declutterMode = !declutterMode;
+        applyDeclutterMode();
+    });
 
     // Group by
     document.getElementById('group-by').addEventListener('change', (e) => {
         rebuildGraph(e.target.value);
+        applyNodeVisibilityFilters();
     });
 
     // Reset
@@ -347,6 +891,19 @@ async function init() {
 
     // Privacy toggle
     document.getElementById('btn-privacy').addEventListener('click', togglePrivacyMode);
+
+    // Online icons (explicit user consent)
+    document.getElementById('btn-online-icons').addEventListener('click', () => {
+        if (!onlineIconsEnabled) {
+            const allowed = window.confirm(
+                'Enable online icons?\n\nAIB will fetch service/provider icons from a public icon CDN (cdn.simpleicons.org) in your browser.\n\nNo icon requests are made unless you enable this.'
+            );
+            if (!allowed) return;
+        }
+
+        onlineIconsEnabled = !onlineIconsEnabled;
+        applyOnlineIcons();
+    });
 
     // Export dropdown
     document.getElementById('btn-export').addEventListener('click', (e) => {
@@ -512,20 +1069,12 @@ function rebuildGraph(groupBy) {
         n.style('background-color', n.data('bgColor') || '#1f3044');
     });
 
-    cy.layout({
-        name: 'cose',
-        animate: false,
-        nodeRepulsion: () => 16000,
-        idealEdgeLength: () => 140,
-        nodeOverlap: 20,
-        padding: 40,
-        componentSpacing: 60,
-        nestingFactor: 1.2,
-        gravity: 0.3,
-    }).run();
+    runCurrentLayout();
+    applyOnlineIcons();
 
     applyEdgeTypeFilter();
-    updateVisibleCount();
+    applyDeclutterMode();
+    applyNodeVisibilityFilters();
 }
 
 // --- Context Menu ---
@@ -751,19 +1300,29 @@ function handleKeyboard(e) {
 
 function resetView() {
     cy.nodes().removeClass('dimmed highlighted neighbor-highlight labels-hidden');
-    cy.edges().removeClass('dimmed edge-hover');
+    cy.edges().removeClass('dimmed edge-hover decluttered-edge');
+    cy.nodes().removeClass('decluttered-isolated');
     disabledEdgeTypes.clear();
     buildEdgeFilterPills();
     document.getElementById('search').value = '';
     document.getElementById('filter-type').value = '';
     document.getElementById('filter-source').value = '';
+    declutterMode = false;
+    localStorage.setItem('declutterMode', 'false');
+    document.getElementById('btn-declutter').classList.remove('active');
+    document.getElementById('group-by').value = '';
+    focusedSourceKey = '';
+    setFocusedResource('');
+    document.getElementById('resource-search').value = '';
+    applyResourceSearchFilter();
+    rebuildGraph('');
     document.getElementById('detail-panel').classList.add('hidden');
     selectedNodeId = null;
     // Clear focus depth button states
     document.querySelectorAll('.depth-buttons button').forEach(b => b.classList.remove('active'));
     clearFocusMessage();
     cy.fit();
-    updateVisibleCount();
+    applyNodeVisibilityFilters();
 }
 
 // --- Scan ---
@@ -818,6 +1377,34 @@ async function checkScanRunning() {
     } catch { /* ignore */ }
 }
 
+function buildConnectionEvidenceRows(nodeId) {
+    const evidenceRows = [];
+    (graphData.edges || []).forEach((edge) => {
+        if (edge.from_id !== nodeId && edge.to_id !== nodeId) return;
+        if (evidenceFilterMode === 'connects_to' && edge.type !== 'connects_to') return;
+
+        const metadata = edge.metadata || {};
+        if (Object.keys(metadata).length === 0) return;
+
+        const isOutgoing = edge.from_id === nodeId;
+        const peerID = isOutgoing ? edge.to_id : edge.from_id;
+        const peerNode = (graphData.nodes || []).find(n => n.id === peerID);
+        const peerName = peerNode ? (peerNode.name || peerID) : peerID;
+        const direction = isOutgoing ? '→' : '←';
+
+        const metadataParts = Object.entries(metadata)
+            .filter(([, value]) => String(value || '').trim() !== '')
+            .map(([key, value]) => `${esc(key)}=${esc(String(value))}`)
+            .join(', ');
+
+        if (!metadataParts) return;
+
+        evidenceRows.push(`<tr><td>${esc(edge.type)}</td><td><span class="evidence-target">${direction} ${esc(peerName)}</span><br><span class="evidence-meta">${metadataParts}</span></td></tr>`);
+    });
+
+    return evidenceRows;
+}
+
 // --- Detail Panel ---
 
 async function showDetail(nodeId) {
@@ -845,12 +1432,66 @@ async function showDetail(nodeId) {
         html += `<tr><td>Expires</td><td>${esc(nodeData.expires_at)} <span class="badge badge-${cls}">${days}d</span></td></tr>`;
     }
     if (nodeData.metadata) {
-        for (const [k, v] of Object.entries(nodeData.metadata)) {
-            html += `<tr><td>${esc(k)}</td><td>${isSensitive ? maskDetailValue(k, v) : esc(v)}</td></tr>`;
+        const metadataEntries = Object.entries(nodeData.metadata).sort((a, b) => {
+            const aConn = isConnectionStringKey(a[0]) || looksLikeConnectionString(a[1]);
+            const bConn = isConnectionStringKey(b[0]) || looksLikeConnectionString(b[1]);
+            if (aConn !== bConn) return aConn ? -1 : 1;
+            return a[0].localeCompare(b[0]);
+        });
+
+        for (const [k, v] of metadataEntries) {
+            const renderedValue = isSensitive ? maskDetailValue(k, v) : esc(v);
+            const isConn = isConnectionStringKey(k) || looksLikeConnectionString(v);
+            const valueClass = isConn ? 'meta-value connection-string' : 'meta-value';
+            const copyButton = isConn
+                ? `<button type="button" class="copy-value-btn" data-copy="${encodeURIComponent(String(v == null ? '' : v))}">Copy</button>`
+                : '';
+            html += `<tr><td>${esc(k)}</td><td><span class="meta-cell"><span class="${valueClass}">${renderedValue}</span>${copyButton}</span></td></tr>`;
         }
     }
     html += '</table>';
+
+    const evidenceRows = buildConnectionEvidenceRows(nodeId);
+
+    if (evidenceRows.length > 0) {
+        html += '<div class="evidence-header">';
+        html += '<h4>Connection Evidence</h4>';
+        html += '<div class="evidence-controls">';
+        html += `<button type="button" class="evidence-filter-btn${evidenceFilterMode === 'all' ? ' active' : ''}" data-evidence-filter="all">All</button>`;
+        html += `<button type="button" class="evidence-filter-btn${evidenceFilterMode === 'connects_to' ? ' active' : ''}" data-evidence-filter="connects_to">connects_to</button>`;
+        html += '</div>';
+        html += '</div>';
+        html += '<table class="meta-table evidence-table">';
+        html += evidenceRows.join('');
+        html += '</table>';
+    }
+
     document.getElementById('detail-content').innerHTML = html;
+
+    document.querySelectorAll('.copy-value-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+            const raw = decodeURIComponent(btn.getAttribute('data-copy') || '');
+            const originalLabel = btn.textContent;
+            try {
+                await copyTextToClipboard(raw);
+                btn.textContent = 'Copied';
+            } catch {
+                btn.textContent = 'Failed';
+            }
+            setTimeout(() => {
+                btn.textContent = originalLabel;
+            }, 1200);
+        });
+    });
+
+    document.querySelectorAll('.evidence-filter-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+            const nextMode = btn.getAttribute('data-evidence-filter') || 'all';
+            if (nextMode === evidenceFilterMode) return;
+            evidenceFilterMode = nextMode;
+            await showDetail(nodeId);
+        });
+    });
 
     // Reset focus controls
     document.querySelectorAll('.depth-buttons button').forEach(b => b.classList.remove('active'));
