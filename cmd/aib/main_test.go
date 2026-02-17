@@ -73,11 +73,16 @@ func seedTestData(t *testing.T, app *cliApp) {
 
 // runCmd executes a cobra command attached to a root, returning any error.
 func runCmd(app *cliApp, cmd *cobra.Command, args ...string) error {
+	return runCmdWithContext(context.Background(), app, cmd, args...)
+}
+
+func runCmdWithContext(ctx context.Context, app *cliApp, cmd *cobra.Command, args ...string) error {
 	root := &cobra.Command{Use: "aib"}
 	root.AddCommand(cmd)
 	root.SetArgs(args)
 	root.SetOut(app.out)
 	root.SetErr(app.errOut)
+	root.SetContext(ctx)
 	return root.Execute()
 }
 
@@ -1291,12 +1296,13 @@ func TestImpactNodeCmd_WithWarnings(t *testing.T) {
 
 func TestScanK8sCmd_LiveFlag(t *testing.T) {
 	app, _ := newTestApp(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 
-	// --live without a real cluster will fail, but it covers the live code path
-	err := runCmd(app, app.scanK8sCmd(), "kubernetes", "--live")
-	// We expect an error since there's no live cluster
+	// --live without a real cluster should not hang and should return promptly.
+	err := runCmdWithContext(ctx, app, app.scanK8sCmd(), "kubernetes", "--live")
 	if err == nil {
-		t.Log("scan k8s --live succeeded unexpectedly (maybe a cluster is available)")
+		t.Log("scan k8s --live succeeded unexpectedly (likely local cluster present)")
 	}
 }
 

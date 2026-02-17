@@ -1,9 +1,86 @@
 package kubernetes
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 )
+
+func TestFetchLive_KubectlNotFound(t *testing.T) {
+	originalLookPath := kubectlLookPath
+	kubectlLookPath = func(string) (string, error) {
+		return "", errors.New("not found")
+	}
+	t.Cleanup(func() {
+		kubectlLookPath = originalLookPath
+	})
+
+	_, err := FetchLive(context.Background(), "", "", []string{"default"})
+	if err == nil {
+		t.Fatal("expected error when kubectl is not found")
+	}
+}
+
+func TestFetchLive_ListNamespacesError(t *testing.T) {
+	originalLookPath := kubectlLookPath
+	originalListNamespaces := listNamespacesFn
+	kubectlLookPath = func(string) (string, error) {
+		return "/usr/bin/kubectl", nil
+	}
+	listNamespacesFn = func(context.Context, string, string) ([]string, error) {
+		return nil, context.DeadlineExceeded
+	}
+	t.Cleanup(func() {
+		kubectlLookPath = originalLookPath
+		listNamespacesFn = originalListNamespaces
+	})
+
+	_, err := FetchLive(context.Background(), "", "", nil)
+	if err == nil {
+		t.Fatal("expected error when listing namespaces fails")
+	}
+}
+
+func TestFetchLive_CollectsWarningsAndContinues(t *testing.T) {
+	originalLookPath := kubectlLookPath
+	originalGet := kubectlGetFn
+	kubectlLookPath = func(string) (string, error) {
+		return "/usr/bin/kubectl", nil
+	}
+	kubectlGetFn = func(_ context.Context, _, _, namespace, resourceTypes string) ([]byte, error) {
+		if resourceTypes == "certificates.cert-manager.io" {
+			return nil, errors.New("no cert manager")
+		}
+		if namespace == "broken" {
+			return nil, errors.New("cluster unreachable")
+		}
+		return []byte(`apiVersion: v1
+kind: List
+items:
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: api
+    namespace: default
+`), nil
+	}
+	t.Cleanup(func() {
+		kubectlLookPath = originalLookPath
+		kubectlGetFn = originalGet
+	})
+
+	r, err := FetchLive(context.Background(), "", "", []string{"broken", "default"})
+	if err != nil {
+		t.Fatalf("FetchLive returned unexpected error: %v", err)
+	}
+	if len(r.Nodes) == 0 {
+		t.Fatal("expected nodes from healthy namespace")
+	}
+	if len(r.Warnings) == 0 {
+		t.Fatal("expected warning from broken namespace")
+	}
+}
 
 func TestBuildKubectlArgs(t *testing.T) {
 	tests := []struct {

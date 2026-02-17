@@ -10,18 +10,24 @@ import (
 	"github.com/matijazezelj/aib/internal/parser"
 )
 
+var (
+	kubectlLookPath = exec.LookPath
+	listNamespacesFn = listNamespaces
+	kubectlGetFn    = kubectlGet
+)
+
 // FetchLive connects to a running Kubernetes cluster via kubectl and pulls
 // resources. If kubeconfig is empty, kubectl uses its default config.
 // If kubeCtx is empty, the current-context is used.
 // If namespaces is empty, all non-system namespaces are scanned.
 func FetchLive(ctx context.Context, kubeconfig, kubeCtx string, namespaces []string) (*parser.ParseResult, error) {
-	if _, err := exec.LookPath("kubectl"); err != nil {
+	if _, err := kubectlLookPath("kubectl"); err != nil {
 		return nil, fmt.Errorf("kubectl not found in PATH: %w", err)
 	}
 
 	if len(namespaces) == 0 {
 		var err error
-		namespaces, err = listNamespaces(ctx, kubeconfig, kubeCtx)
+		namespaces, err = listNamespacesFn(ctx, kubeconfig, kubeCtx)
 		if err != nil {
 			return nil, fmt.Errorf("listing namespaces: %w", err)
 		}
@@ -33,7 +39,7 @@ func FetchLive(ctx context.Context, kubeconfig, kubeCtx string, namespaces []str
 	resourceTypes := "deployments,statefulsets,daemonsets,services,ingresses,configmaps,secrets,serviceaccounts,roles,rolebindings,networkpolicies,jobs,cronjobs,horizontalpodautoscalers"
 
 	for _, ns := range namespaces {
-		data, err := kubectlGet(ctx, kubeconfig, kubeCtx, ns, resourceTypes)
+		data, err := kubectlGetFn(ctx, kubeconfig, kubeCtx, ns, resourceTypes)
 		if err != nil {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("namespace %s: %v", ns, err))
 			continue
@@ -53,7 +59,7 @@ func FetchLive(ctx context.Context, kubeconfig, kubeCtx string, namespaces []str
 
 	// Try cert-manager certificates separately (may not be installed)
 	for _, ns := range namespaces {
-		data, err := kubectlGet(ctx, kubeconfig, kubeCtx, ns, "certificates.cert-manager.io")
+		data, err := kubectlGetFn(ctx, kubeconfig, kubeCtx, ns, "certificates.cert-manager.io")
 		if err != nil {
 			continue // cert-manager may not be installed, skip silently
 		}
