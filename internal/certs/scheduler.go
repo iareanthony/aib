@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/matijazezelj/aib/internal/alert"
@@ -19,6 +20,9 @@ type CertScheduler struct {
 	logger   *slog.Logger
 	stopCh   chan struct{}
 	doneCh   chan struct{}
+	mu       sync.Mutex
+	started  bool
+	stopOnce sync.Once
 }
 
 // NewCertScheduler creates a scheduler that probes certs on the given interval.
@@ -44,6 +48,14 @@ func NewCertScheduler(tracker *Tracker, store *graph.SQLiteStore, alerter alert.
 
 // Start begins the periodic probing loop. Call Stop() to terminate.
 func (cs *CertScheduler) Start(ctx context.Context) {
+	cs.mu.Lock()
+	if cs.started {
+		cs.mu.Unlock()
+		return
+	}
+	cs.started = true
+	cs.mu.Unlock()
+
 	go func() {
 		defer close(cs.doneCh)
 		ticker := time.NewTicker(cs.interval)
@@ -68,7 +80,16 @@ func (cs *CertScheduler) Start(ctx context.Context) {
 
 // Stop halts the scheduler and waits for it to finish.
 func (cs *CertScheduler) Stop() {
-	close(cs.stopCh)
+	cs.mu.Lock()
+	started := cs.started
+	cs.mu.Unlock()
+	if !started {
+		return
+	}
+
+	cs.stopOnce.Do(func() {
+		close(cs.stopCh)
+	})
 	<-cs.doneCh
 }
 

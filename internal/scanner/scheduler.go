@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 )
 
@@ -14,6 +15,9 @@ type Scheduler struct {
 	logger   *slog.Logger
 	stopCh   chan struct{}
 	doneCh   chan struct{}
+	mu       sync.Mutex
+	started  bool
+	stopOnce sync.Once
 }
 
 // NewScheduler creates a scheduler. The interval string is parsed with
@@ -37,6 +41,14 @@ func NewScheduler(sc *Scanner, interval string, logger *slog.Logger) (*Scheduler
 
 // Start begins the scheduling loop. Call Stop() to terminate.
 func (s *Scheduler) Start(ctx context.Context) {
+	s.mu.Lock()
+	if s.started {
+		s.mu.Unlock()
+		return
+	}
+	s.started = true
+	s.mu.Unlock()
+
 	go func() {
 		defer close(s.doneCh)
 		ticker := time.NewTicker(s.interval)
@@ -72,6 +84,15 @@ func (s *Scheduler) Start(ctx context.Context) {
 
 // Stop halts the scheduler and waits for it to finish.
 func (s *Scheduler) Stop() {
-	close(s.stopCh)
+	s.mu.Lock()
+	started := s.started
+	s.mu.Unlock()
+	if !started {
+		return
+	}
+
+	s.stopOnce.Do(func() {
+		close(s.stopCh)
+	})
 	<-s.doneCh
 }

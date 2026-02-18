@@ -4,11 +4,30 @@
 
 ![AIB Web UI](assets/aib.png)
 
-Lightweight, self-hosted infrastructure asset discovery and dependency mapping tool. Parses IaC sources (Terraform, Pulumi, CloudFormation, Kubernetes/Helm, Ansible, Docker Compose), builds a unified dependency graph, tracks certificate expiry, and provides blast radius analysis — "what breaks if X fails?"
+AIB helps you answer a practical question quickly: what depends on what in this environment?
 
-Part of the "in a box" security toolbox alongside [SIB](https://github.com/matijazezelj/sib) (SIEM in a Box) and [NIB](https://github.com/matijazezelj/nib) (NIDS in a Box).
+Point it at your IaC, and it builds a graph of assets and dependencies in SQLite. Then you can inspect blast radius, drift, cert expiry, and security findings from one place.
+
+It is part of the "in a box" toolkit alongside [SIB](https://github.com/matijazezelj/sib) and [NIB](https://github.com/matijazezelj/nib).
+
+### Typical workflow
+
+1. Scan one or more sources (`scan terraform`, `scan k8s`, ...)
+2. Open the UI (`serve`) or query from CLI (`graph`, `impact`)
+3. Run security checks (`graph audit`) and triage critical findings
+4. Re-scan as infra changes to track drift
 
 ## Quick Start
+
+Fastest path to value:
+
+```bash
+./bin/aib scan terraform /path/to/terraform.tfstate
+./bin/aib scan k8s /path/to/manifests/
+./bin/aib serve
+```
+
+Full setup options:
 
 ```bash
 # Build from source (requires Go 1.25.7+)
@@ -30,11 +49,17 @@ docker compose -f deploy/docker-compose.yml up --build
 
 ## Scanning Sources
 
-AIB supports 7 IaC parsers. All support multiple paths with automatic cross-file edge resolution.
+AIB currently supports seven parsers. You can pass multiple paths, and cross-file references are resolved when possible.
+
+Use the parser sections below as reference. Most teams start with Terraform + Kubernetes, then add other sources.
 
 ### Terraform State
 
-Parses `.tfstate` files (100+ resource type mappings across AWS, GCP, Azure, Cloudflare, TLS). Edges come from `dependencies` arrays and attribute references (vpc_id, subnet_id, etc.). Dependency edges include `source=tfstate_dependency` and `reference` metadata; attribute edges include `via` and `raw_value`. Security-relevant metadata is extracted automatically: `encrypted`, `storage_encrypted`, `publicly_accessible`, `deletion_protection`, `multi_az`, ingress/egress CIDRs for security groups, and S3 versioning/logging status. Node IDs: `tf:<assetType>:<name>`.
+Parses `.tfstate` files (100+ mapped resource types across AWS/GCP/Azure/Cloudflare/TLS). Edges come from `dependencies` and attribute references (`vpc_id`, `subnet_id`, etc.).
+
+It also extracts security metadata such as `encrypted`, `storage_encrypted`, `publicly_accessible`, `deletion_protection`, `multi_az`, SG ingress/egress CIDRs, and S3 versioning/logging status.
+
+Node IDs: `tf:<assetType>:<name>`.
 
 ```bash
 aib scan terraform terraform.tfstate
@@ -48,7 +73,9 @@ aib scan terraform --remote --workspace='*' project-a/ project-b/
 
 ### Terraform Plan
 
-Parses `terraform show -json` output for pre-deploy impact analysis. Classifies changes as create/update/delete/replace and computes blast radius for destructive actions. Node IDs are compatible with state-scanned nodes.
+Parses `terraform show -json` output for pre-deploy impact analysis. Changes are classified as create/update/delete/replace, and destructive actions can be scored for blast radius.
+
+Node IDs are compatible with state-scanned nodes.
 
 ```bash
 terraform plan -out=tfplan && terraform show -json tfplan > plan.json
@@ -58,9 +85,13 @@ aib scan terraform-plan infra-plan.json services-plan.json
 
 ### Kubernetes / Helm
 
-Scans YAML manifests or Helm charts. Discovers workloads, services, ingresses, secrets, configmaps and their relationships (label selector matching, TLS termination, volume mounts, envFrom refs). Security context metadata is extracted for each container: `privileged`, `runAsNonRoot`, `readOnlyRootFilesystem`, `allowPrivilegeEscalation`, `runAsUser`, plus pod-level `hostNetwork`, `hostPID`, `hostIPC`, and `serviceAccountName`.
+Scans YAML manifests or Helm charts and discovers workloads, services, ingresses, secrets, configmaps, and their relationships (selectors, TLS, mounts, `envFrom`, etc.).
 
-Also infers workload interconnectivity (`connects_to`) from application config values (for example service URLs/hosts found in env vars and ConfigMap values), so app-to-service dependencies are visible even when they are expressed only as runtime connection strings. Node IDs: `k8s:<assetType>:<namespace>/<name>`.
+Security context metadata is extracted per container (`privileged`, `runAsNonRoot`, `readOnlyRootFilesystem`, `allowPrivilegeEscalation`, `runAsUser`) plus pod-level flags (`hostNetwork`, `hostPID`, `hostIPC`, `serviceAccountName`).
+
+It also infers `connects_to` edges from runtime config values (for example service hosts in env vars and ConfigMaps), so app-to-service dependencies show up even when no explicit IaC edge exists.
+
+Node IDs: `k8s:<assetType>:<namespace>/<name>`.
 
 ```bash
 aib scan k8s deployment.yaml
@@ -74,9 +105,9 @@ aib scan k8s --live --kubeconfig=~/.kube/config --context=prod --namespace=app
 
 ### Ansible
 
-Parses inventory files (INI/YAML) to discover hosts. With `--playbooks`, also discovers containers and services from `docker_container` and `service` tasks.
+Parses inventory files (INI/YAML) to discover hosts. With `--playbooks`, it can also discover containers and services from `docker_container` and `service` tasks.
 
-Inventory var inference also builds interconnectivity edges between hosts and dependent services/databases (for example `db_host`, `redis_host`, `k8s_service`). When possible, inferred database/service nodes include `connection_string` metadata (e.g. PostgreSQL/Redis) so app-to-data paths are explicit in both CLI and UI.
+Inventory variables are used to infer dependency edges (for example `db_host`, `redis_host`, `k8s_service`). When possible, inferred nodes include `connection_string` metadata so app-to-data paths are explicit in CLI and UI.
 
 Node IDs: `ansible:<assetType>:<hostname>`.
 
@@ -87,7 +118,11 @@ aib scan ansible staging.ini production.ini --playbooks=./playbooks/
 
 ### Docker Compose
 
-Parses Docker Compose files to discover services, networks, and volumes with their dependency relationships (depends_on, network membership, volume mounts). Edges carry connection evidence metadata (`via`, `raw_value`) so the UI and API show exactly how each relationship was discovered. Node IDs: `compose:<assetType>:<name>`.
+Parses Docker Compose files into services, networks, and volumes, then builds dependency edges (`depends_on`, network membership, volume mounts).
+
+Edges keep connection evidence metadata (`via`, `raw_value`) so you can see why a relationship exists.
+
+Node IDs: `compose:<assetType>:<name>`.
 
 ```bash
 aib scan compose docker-compose.yml
@@ -96,7 +131,11 @@ aib scan compose docker-compose.yml docker-compose.override.yml
 
 ### CloudFormation
 
-Parses AWS CloudFormation templates (YAML/JSON, ~40 resource type mappings). Edges from DependsOn, Ref, Fn::GetAtt, and property references (VpcId, SubnetId, SecurityGroupIds). Each edge includes `via` and `raw_value` metadata distinguishing DependsOn vs Ref provenance. Security metadata extracted: `PubliclyAccessible`, `StorageEncrypted`, `DeletionProtection`, `MultiAZ`, security group ingress CIDRs, and S3 `AccessControl`. Node IDs: `cfn:<assetType>:<logicalId>`.
+Parses AWS CloudFormation templates (YAML/JSON, ~40 mapped resource types). Edges come from `DependsOn`, `Ref`, `Fn::GetAtt`, and common property references (`VpcId`, `SubnetId`, `SecurityGroupIds`).
+
+Each edge includes provenance metadata (`via`, `raw_value`). Security metadata includes `PubliclyAccessible`, `StorageEncrypted`, `DeletionProtection`, `MultiAZ`, SG ingress CIDRs, and S3 `AccessControl`.
+
+Node IDs: `cfn:<assetType>:<logicalId>`.
 
 ```bash
 aib scan cloudformation template.yaml
@@ -105,7 +144,11 @@ aib scan cloudformation vpc.yaml compute.yaml database.json
 
 ### Pulumi
 
-Parses `pulumi stack export` JSON output (~80 resource type mappings across AWS, GCP, Azure, Kubernetes, TLS). Edges from dependency arrays, attribute references, and parent URNs. Attribute edges carry `via` and `raw_value` metadata (e.g. `via=vpcId`, `raw_value=vpc-abc123`). Security metadata extracted: `encrypted`, `storageEncrypted`, `publiclyAccessible`, `deletionProtection`, `multiAz`, and ingress CIDRs. Node IDs: `plm:<assetType>:<name>`.
+Parses `pulumi stack export` JSON (~80 mapped resource types across AWS/GCP/Azure/Kubernetes/TLS). Edges come from dependency arrays, attribute references, and parent URNs.
+
+Attribute edges keep provenance metadata (`via`, `raw_value`). Security metadata includes `encrypted`, `storageEncrypted`, `publiclyAccessible`, `deletionProtection`, `multiAz`, and ingress CIDRs.
+
+Node IDs: `plm:<assetType>:<name>`.
 
 ```bash
 aib scan pulumi stack-export.json
@@ -113,6 +156,13 @@ aib scan pulumi infra-stack.json app-stack.json
 ```
 
 ## Graph Queries
+
+For daily use, these are the commands most people rely on:
+
+- `aib graph show` for a quick snapshot
+- `aib impact node <id>` when investigating risk
+- `aib graph path <from> <to>` to verify dependency paths
+- `aib graph audit` for security checks
 
 ```bash
 aib graph show                             # summary (node/edge counts by type)
@@ -129,7 +179,7 @@ aib graph prune --stale-days=30            # remove stale nodes
 
 ### JSON Output
 
-All query commands support `--output json` (or `-o json`) for machine-readable output, making it easy to pipe into `jq`, scripts, or CI pipelines:
+All query commands support `--output json` (or `-o json`) so they can be piped into `jq`, scripts, and CI:
 
 ```bash
 aib -o json graph nodes --type=vm | jq '.[].id'
@@ -144,6 +194,8 @@ aib -o json db stats | jq '{nodes: .total_nodes, edges: .total_edges}'
 Supported commands: `graph show`, `graph nodes`, `graph edges`, `graph neighbors`, `graph path`, `graph deps`, `graph cycles`, `graph spof`, `graph orphans`, `graph audit`, `impact node`, `certs list`, `certs expiring`, `certs probe`, `db stats`, `version`.
 
 ## Analysis
+
+These commands are most useful after data has already been scanned.
 
 ### Blast Radius
 
@@ -164,7 +216,7 @@ Impact Analysis: tf:network:prod-vpc
 
 ### Security Audit
 
-AIB includes a built-in security audit engine that inspects the graph for common misconfigurations across all IaC sources. The engine runs 12 checks across three severity levels (critical, warning, info):
+AIB includes a built-in security audit over the graph model. It runs 12 checks with three severities (`critical`, `warning`, `info`):
 
 | Check | Severity | Description |
 |-------|----------|-------------|
@@ -186,7 +238,7 @@ aib graph audit                            # tabular report
 aib -o json graph audit | jq '.findings[] | select(.severity == "critical")'
 ```
 
-The web UI highlights nodes with audit findings: **red borders** for critical findings and **orange borders** for warnings. Clicking a flagged node shows a security findings banner at the top of the detail panel.
+The web UI marks findings directly on nodes: **red border** for critical, **orange border** for warning. Clicking a flagged node opens the details panel with a findings banner.
 
 ### Cycles, SPOF, Orphans
 
@@ -217,7 +269,7 @@ aib certs expiring --days=30               # expiring within threshold
 aib certs check                            # re-probe all known endpoints
 ```
 
-When running `aib serve`, certificates are probed automatically on a schedule (configurable via `certs.probe_interval`). Expiry alerts can be sent to stdout, a generic webhook (e.g. SIB), or Slack (Block Kit formatted messages with severity colors and blast radius details).
+When running `aib serve`, certificates are probed on a schedule (`certs.probe_interval`). Expiry alerts can be sent to stdout, a generic webhook (for example SIB), or Slack.
 
 ## Web UI & API
 
@@ -227,27 +279,31 @@ aib serve --listen=:9090                   # custom port
 aib serve --read-only                      # disable scan triggers
 ```
 
-The web UI provides interactive graph visualization with search, type/source filtering, blast radius highlighting, and focus modes.
+The UI is designed for investigation: find a node, inspect edges, and answer impact questions quickly.
 
-Recent UI capabilities include:
+Current UI features:
 
 - resource-focused left sidebar with source grouping and quick source-only filtering
 - declutter toggle and selectable layout modes (readable/balanced/compact)
 - resizable left and right side panels
-- larger typography for improved readability
+- improved base typography for readability
 - connection-string-aware detail rendering with one-click `Copy` actions
-- **Connection Evidence** section on edges showing how each relationship was discovered (`via`, `raw_value`, `reference`) with All/connects_to filter
-- **Online Icons** toggle (consent-gated) that fetches service/provider icons from [Simple Icons](https://simpleicons.org/) CDN and overlays them on graph nodes (Kubernetes, Terraform, Docker, Redis, PostgreSQL, Ansible, etc.)
-- **Security Risk Indicators**: nodes with audit findings get colored borders — red for critical, orange for warning — with a security findings banner in the detail panel
-- Graph Focus panel with Dependencies, Impact, Find Secrets Path, and Find External Path modes
+- **Connection Evidence** section on edges (`via`, `raw_value`, `reference`) with All/connects_to filtering
+- **Online Icons** toggle (consent-gated) for service/provider icons from [Simple Icons](https://simpleicons.org/)
+- **Security Risk Indicators** with colored borders and findings banner in the detail panel
+- Focus panel: Dependencies, Impact, Find Secrets Path, Find External Path
+
+If the graph feels noisy, start with search + source filter, then use focus modes from a single node.
 
 API docs are available at `/api/docs` (Swagger UI).
 
 ### External CLI Timeouts
 
-For parser paths that call external tools (`kubectl`, `helm`, `terraform`), AIB applies a default command timeout when no deadline is provided by the caller. This improves robustness in CI and prevents long-running scans from hanging indefinitely.
+For parser paths that call external tools (`kubectl`, `helm`, `terraform`), AIB applies a default command timeout when the caller does not provide a deadline.
 
 ### API Endpoints
+
+The API mostly mirrors CLI capabilities. Most endpoints are read-only graph queries; `/api/v1/scan` is the main mutating endpoint.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -299,11 +355,13 @@ server:
 
 Auth applies to `/api/*` routes only. The web UI, static assets, `/healthz`, and `/metrics` are always accessible.
 
-AIB is designed for trusted internal networks. The server includes security headers (CSP with strict `default-src 'self'`, allowlisted CDN origins for icons), rate limiting (10 req/s per IP), request body limits (1 MB), path traversal protection, and a scan path allowlist (`scan.allowed_paths`). Do not expose to the public internet without a reverse proxy and TLS.
+AIB is intended for trusted internal networks. It includes security headers (strict CSP), API rate limiting (10 req/s per IP), request body limits (1 MB), path traversal checks, and scan path allowlisting (`scan.allowed_paths`).
+
+Do not expose it directly to the public internet; place it behind TLS/reverse proxy.
 
 ## Configuration
 
-AIB works out of the box with sensible defaults. For customization, create `aib.yaml` in the current directory or `~/.aib/`:
+Defaults are usable as-is. For customization, create `aib.yaml` in the current directory or in `~/.aib/`:
 
 ```yaml
 storage:
@@ -344,13 +402,24 @@ scan:
     - "/opt/infra/k8s"
 ```
 
-All settings support `${ENV_VAR}` expansion and can be set via environment variables with the `AIB_` prefix (e.g. `AIB_STORAGE_PATH`, `AIB_SERVER_LISTEN`). Logging is controlled via `--log-format` (text/json) and `--log-level` (debug/info/warn/error) flags. Shell completions: `aib completion [bash|zsh|fish|powershell]`.
+All settings support `${ENV_VAR}` expansion and can also be set with `AIB_`-prefixed environment variables (for example `AIB_STORAGE_PATH`, `AIB_SERVER_LISTEN`).
+
+Logging flags: `--log-format` (`text`/`json`) and `--log-level` (`debug`/`info`/`warn`/`error`). Shell completion: `aib completion [bash|zsh|fish|powershell]`.
 
 See [`configs/aib.yaml.example`](configs/aib.yaml.example) for the full reference.
 
+For most deployments, these are the first settings worth overriding:
+
+- `storage.path`
+- `server.listen`
+- `server.api_token`
+- `scan.allowed_paths`
+
 ## Memgraph
 
-AIB uses SQLite as the persistent source of truth. Optionally, [Memgraph](https://github.com/memgraph/memgraph) can be added as a graph traversal engine for faster blast radius, shortest path, and neighbor queries. If Memgraph is unavailable, all queries fall back to the local BFS engine transparently.
+AIB uses SQLite as the source of truth. You can optionally add [Memgraph](https://github.com/memgraph/memgraph) for faster blast-radius, shortest-path, and neighbor queries. If Memgraph is unavailable, AIB falls back to the local BFS engine.
+
+Use Memgraph when graph size or query volume grows. For small environments, SQLite-only mode is usually enough.
 
 ```bash
 # Start Memgraph
@@ -363,7 +432,7 @@ docker run -p 7687:7687 memgraph/memgraph-mage
 aib graph sync
 ```
 
-Writes go to both SQLite and Memgraph via the `SyncedStore` decorator. Memgraph can be rebuilt at any time with `aib graph sync`. The `deploy/docker-compose.yml` includes both AIB and Memgraph pre-configured.
+When enabled, writes go to SQLite and Memgraph through `SyncedStore`. You can rebuild Memgraph state any time with `aib graph sync`. The `deploy/docker-compose.yml` includes both services.
 
 ## Known Limitations
 

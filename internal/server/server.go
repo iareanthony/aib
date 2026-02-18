@@ -38,6 +38,8 @@ type Server struct {
 	// rate limiter state
 	limiters sync.Map // map[string]*ipLimiter
 	done     chan struct{}
+
+	shutdownOnce sync.Once
 }
 
 type ipLimiter struct {
@@ -215,8 +217,16 @@ func (s *Server) Start() error {
 
 // Shutdown gracefully shuts down the server.
 func (s *Server) Shutdown(ctx context.Context) error {
-	if s.done != nil {
-		close(s.done)
+	if s.srv == nil {
+		return nil
 	}
-	return s.srv.Shutdown(ctx)
+
+	var err error
+	s.shutdownOnce.Do(func() {
+		if s.done != nil {
+			close(s.done)
+		}
+		err = s.srv.Shutdown(ctx)
+	})
+	return err
 }
