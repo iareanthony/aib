@@ -192,6 +192,27 @@ docker run -p 7687:7687 memgraph/memgraph-mage
 aib graph sync   # sync existing data
 ```
 
+## How AIB Compares
+
+| Tool | Approach | Data Source | Graph DB | Drift | Blast Radius | Cert Tracking | Security Audit |
+|------|----------|-------------|----------|-------|--------------|---------------|----------------|
+| **AIB** | Parse IaC files locally | Terraform, K8s, Ansible, Compose, CFn, Pulumi | SQLite + optional Memgraph | Yes | Yes | Yes | Yes |
+| [Cartography](https://github.com/lyft/cartography) | Live API discovery | AWS, GCP, Azure, GitHub, … | Neo4j (required) | No | No | No | Limited |
+| [CloudQuery](https://github.com/cloudquery/cloudquery) | Sync cloud APIs to SQL | 100+ cloud providers | PostgreSQL | No | No | No | Via policies |
+| [Steampipe](https://github.com/turbot/steampipe) | SQL over live APIs | 140+ plugins | Embedded Postgres | No | No | No | Via mods |
+| [inframap](https://github.com/cycloidio/inframap) | Visualise TF state | Terraform only | None (DOT output) | No | No | No | No |
+| [Rover](https://github.com/im2nguyen/rover) | Visualise TF state/plan | Terraform only | None (browser UI) | No | No | No | No |
+| `terraform graph` | Built-in TF command | Terraform only | None (DOT output) | No | No | No | No |
+| [Backstage](https://github.com/backstage/backstage) | Service catalog | Manual YAML + plugins | PostgreSQL | No | No | No | Via plugins |
+
+**Key differences:**
+
+- **No cloud credentials required** — AIB parses IaC files that already exist in your repo; it never calls cloud APIs.
+- **Multi-source in one graph** — Terraform, Kubernetes, Ansible, Compose, CloudFormation, and Pulumi assets land in a single unified graph, enabling cross-stack blast-radius analysis.
+- **All-in-one binary** — drift detection, TLS certificate tracking, security audit (15 checks), SPOF/cycle/orphan analysis, and a web UI ship in a single ~15 MB binary with zero external dependencies (SQLite is embedded).
+- **Cartography / CloudQuery / Steampipe** excel at live cloud inventory but require API credentials, a running database, and don't parse IaC.
+- **inframap / Rover / `terraform graph`** visualise Terraform only and don't analyse blast radius, drift, or security posture.
+
 ## Known Limitations
 
 - **Single-instance** — no clustering; suitable for up to ~10K assets
