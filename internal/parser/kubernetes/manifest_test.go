@@ -1,6 +1,14 @@
 package kubernetes
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/pem"
+	"fmt"
+	"math/big"
 	"os"
 	"testing"
 	"time"
@@ -34,6 +42,7 @@ func TestParseManifests_SampleFile(t *testing.T) {
 	// Ingress: api-ingress
 	// Certificate: api-cert
 	// Auto-created secrets: api-secret (env secretKeyRef), api-tls-cert (volume + TLS/cert-manager)
+	// Derived certificate from TLS secret: api-tls-cert
 	wantNodes := []string{
 		"k8s:namespace:production",
 		"k8s:secret:production/db-credentials",
@@ -45,6 +54,7 @@ func TestParseManifests_SampleFile(t *testing.T) {
 		"k8s:service:production/redis-svc",
 		"k8s:ingress:production/api-ingress",
 		"k8s:certificate:production/api-cert",
+		"k8s:certificate:production/api-tls-cert",
 		"k8s:secret:production/api-tls-cert",
 		"k8s:secret:production/api-secret",
 	}
@@ -55,8 +65,8 @@ func TestParseManifests_SampleFile(t *testing.T) {
 		}
 	}
 
-	if len(result.Nodes) < 12 {
-		t.Errorf("nodes = %d, want >= 12", len(result.Nodes))
+	if len(result.Nodes) < 13 {
+		t.Errorf("nodes = %d, want >= 13", len(result.Nodes))
 	}
 }
 
@@ -94,6 +104,11 @@ func TestParseManifests_Edges(t *testing.T) {
 		t.Error("missing terminates_tls edge: api-ingress -> api-tls-cert")
 	}
 
+	// Ingress → derived TLS certificate (terminates_tls)
+	if edgeMap["k8s:ingress:production/api-ingress->k8s:certificate:production/api-tls-cert"] != models.EdgeTerminatesTLS {
+		t.Error("missing terminates_tls edge: api-ingress -> certificate/api-tls-cert")
+	}
+
 	// Deployment → Secret (mounts_secret via envFrom)
 	if edgeMap["k8s:pod:production/api-backend->k8s:secret:production/db-credentials"] != models.EdgeMountsSecret {
 		t.Error("missing mounts_secret edge: api-backend -> db-credentials")
@@ -107,6 +122,11 @@ func TestParseManifests_Edges(t *testing.T) {
 	// Certificate → Secret (depends_on via cert-manager)
 	if edgeMap["k8s:certificate:production/api-cert->k8s:secret:production/api-tls-cert"] != models.EdgeDependsOn {
 		t.Error("missing depends_on edge: api-cert -> api-tls-cert")
+	}
+
+	// TLS Secret → derived Certificate (depends_on via tls_secret)
+	if edgeMap["k8s:secret:production/api-tls-cert->k8s:certificate:production/api-tls-cert"] != models.EdgeDependsOn {
+		t.Error("missing depends_on edge: api-tls-cert secret -> certificate/api-tls-cert")
 	}
 }
 
@@ -194,6 +214,145 @@ func TestParseManifests_InvalidYAML(t *testing.T) {
 	if len(result.Warnings) == 0 {
 		t.Error("expected warnings for invalid YAML document")
 	}
+}
+
+func TestParseManifests_TLSSecret_DerivesCertificateNode(t *testing.T) {
+	data := []byte(fmt.Sprintf(`---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mtls-cert
+  namespace: production
+type: kubernetes.io/tls
+data:
+	tls.crt: LS0tLQ==
+  tls.key: LS0tLQ==
+`))
+
+	result, err := parseManifests(data, "tls-secret.yaml", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nodeIDs := make(map[string]models.Node)
+	for _, n := range result.Nodes {
+		nodeIDs[n.ID] = n
+	}
+
+	secretID := "k8s:secret:production/mtls-cert"
+	certID := "k8s:certificate:production/mtls-cert"
+
+	if _, ok := nodeIDs[secretID]; !ok {
+		t.Fatalf("missing TLS secret node %s", secretID)
+	}
+	certNode, ok := nodeIDs[certID]
+	if !ok {
+		t.Fatalf("missing derived certificate node %s", certID)
+	}
+	if certNode.Type != models.AssetCertificate {
+		t.Fatalf("derived node type = %q, want %q", certNode.Type, models.AssetCertificate)
+	}
+	if certNode.Metadata["derived_from_secret"] != "true" {
+		t.Fatalf("derived_from_secret = %q, want true", certNode.Metadata["derived_from_secret"])
+	}
+
+	edgeFound := false
+	for _, e := range result.Edges {
+		if e.FromID == secretID && e.ToID == certID && e.Type == models.EdgeDependsOn {
+			edgeFound = true
+			break
+		}
+	}
+	if !edgeFound {
+		t.Fatalf("missing depends_on edge from %s to %s", secretID, certID)
+	}
+}
+
+func TestExtractTLSSecretExpiry_FromPEM(t *testing.T) {
+	notAfter := time.Now().UTC().Add(72 * time.Hour).Truncate(time.Second)
+	crtB64 := mustSelfSignedTLSCertBase64(t, notAfter)
+
+	got, err := extractTLSSecretExpiry(map[string]string{"tls.crt": crtB64})
+	if err != nil {
+		t.Fatalf("extractTLSSecretExpiry returned error: %v", err)
+	}
+	if got == nil {
+		t.Fatalf("extractTLSSecretExpiry returned nil expiry")
+	}
+	if got.UTC().Format(time.RFC3339) != notAfter.Format(time.RFC3339) {
+		t.Fatalf("expiry = %s, want %s", got.UTC().Format(time.RFC3339), notAfter.Format(time.RFC3339))
+	}
+}
+
+func TestParseManifests_CertManagerCertificate_ExpiryFromStatus(t *testing.T) {
+	notAfter := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
+	data := []byte(fmt.Sprintf(`---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: app-cert
+  namespace: production
+spec:
+  secretName: app-cert-secret
+  dnsNames:
+    - app.example.internal
+status:
+  notAfter: %s
+`, notAfter.Format(time.RFC3339)))
+
+	result, err := parseManifests(data, "cert-status.yaml", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var certNode *models.Node
+	for i := range result.Nodes {
+		if result.Nodes[i].ID == "k8s:certificate:production/app-cert" {
+			certNode = &result.Nodes[i]
+			break
+		}
+	}
+	if certNode == nil {
+		t.Fatalf("missing certificate node")
+	}
+	if certNode.ExpiresAt == nil {
+		t.Fatalf("cert-manager certificate expires_at is nil")
+	}
+	if certNode.ExpiresAt.UTC().Format(time.RFC3339) != notAfter.Format(time.RFC3339) {
+		t.Fatalf("cert-manager certificate expires_at = %s, want %s", certNode.ExpiresAt.UTC().Format(time.RFC3339), notAfter.Format(time.RFC3339))
+	}
+	if certNode.Metadata["not_after"] == "" {
+		t.Fatalf("cert-manager certificate metadata.not_after is empty")
+	}
+}
+
+func mustSelfSignedTLSCertBase64(t *testing.T, notAfter time.Time) string {
+	t.Helper()
+
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	tpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{CommonName: "mtls-cert"},
+		NotBefore: time.Now().UTC().Add(-1 * time.Hour),
+		NotAfter:  notAfter,
+		KeyUsage:  x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageServerAuth,
+		},
+		BasicConstraintsValid: true,
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	return base64.StdEncoding.EncodeToString(pemBytes)
 }
 
 func TestParseManifests_UnsupportedKind(t *testing.T) {

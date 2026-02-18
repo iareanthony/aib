@@ -2,9 +2,12 @@ package kubernetes
 
 import (
 	"bytes"
+	"crypto/x509"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"net/url"
+	"encoding/pem"
 	"strings"
 	"time"
 
@@ -20,11 +23,17 @@ type k8sResource struct {
 	Kind       string      `yaml:"kind"`
 	Metadata   k8sMeta     `yaml:"metadata"`
 	Spec       k8sSpec     `yaml:"spec"`
+	Type       string      `yaml:"type"`
 	Data       map[string]string `yaml:"data"`
+	Status     k8sStatus   `yaml:"status"`
 
 	// RBAC: RoleBinding/ClusterRoleBinding top-level fields
 	RoleRef  *k8sRoleRef  `yaml:"roleRef"`
 	Subjects []k8sSubject `yaml:"subjects"`
+}
+
+type k8sStatus struct {
+	NotAfter string `yaml:"notAfter"`
 }
 
 type k8sMeta struct {
@@ -448,6 +457,9 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 			meta := map[string]string{
 				"namespace": ns,
 			}
+			if strings.TrimSpace(res.Type) != "" {
+				meta["type"] = strings.TrimSpace(res.Type)
+			}
 			for k, v := range res.Metadata.Labels {
 				meta["label:"+k] = v
 			}
@@ -465,6 +477,44 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 			}
 			nodeMap[nodeID] = node
 			result.Nodes = append(result.Nodes, node)
+
+			// For Kubernetes TLS secrets, derive a certificate node so certs are
+			// visible in the graph even without cert-manager Certificate CRDs.
+			if strings.EqualFold(strings.TrimSpace(res.Type), "kubernetes.io/tls") {
+				expiresAt, _ := extractTLSSecretExpiry(res.Data)
+				certID := k8sNodeID("certificate", ns, res.Metadata.Name)
+				if _, exists := nodeMap[certID]; !exists {
+					certNode := models.Node{
+						ID:         certID,
+						Name:       res.Metadata.Name,
+						Type:       models.AssetCertificate,
+						Source:     "kubernetes",
+						SourceFile: sourceFile,
+						Provider:   "kubernetes",
+						Metadata: map[string]string{
+							"namespace":            ns,
+							"derived_from_secret":  "true",
+							"secret_name":          res.Metadata.Name,
+						},
+						ExpiresAt:  expiresAt,
+						LastSeen:   now,
+						FirstSeen:  now,
+					}
+					if expiresAt != nil {
+						certNode.Metadata["not_after"] = expiresAt.UTC().Format(time.RFC3339)
+					}
+					nodeMap[certID] = certNode
+					result.Nodes = append(result.Nodes, certNode)
+				}
+				edgeID := fmt.Sprintf("%s->depends_on->%s", nodeID, certID)
+				result.Edges = append(result.Edges, models.Edge{
+					ID:       edgeID,
+					FromID:   nodeID,
+					ToID:     certID,
+					Type:     models.EdgeDependsOn,
+					Metadata: map[string]string{"via": "tls_secret"},
+				})
+			}
 
 		case "ConfigMap":
 			nodeID := k8sNodeID("configmap", ns, res.Metadata.Name)
@@ -524,6 +574,14 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 				meta["label:"+k] = v
 			}
 
+			var expiresAt *time.Time
+			if strings.TrimSpace(res.Status.NotAfter) != "" {
+				if ts, err := time.Parse(time.RFC3339, strings.TrimSpace(res.Status.NotAfter)); err == nil {
+					expiresAt = &ts
+					meta["not_after"] = ts.UTC().Format(time.RFC3339)
+				}
+			}
+
 			node := models.Node{
 				ID:         nodeID,
 				Name:       res.Metadata.Name,
@@ -532,6 +590,7 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 				SourceFile: sourceFile,
 				Provider:   "cert-manager",
 				Metadata:   meta,
+				ExpiresAt:  expiresAt,
 				LastSeen:   now,
 				FirstSeen:  now,
 			}
@@ -728,6 +787,52 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 					nodeMap[secretID] = node
 					result.Nodes = append(result.Nodes, node)
 				}
+
+				// Also expose the TLS cert as a first-class certificate node.
+				certID := k8sNodeID("certificate", ns, tls.SecretName)
+				if _, exists := nodeMap[certID]; !exists {
+					certMeta := map[string]string{
+						"namespace":           ns,
+						"derived_from_secret": "true",
+						"secret_name":         tls.SecretName,
+					}
+					if len(tls.Hosts) > 0 {
+						certMeta["dns_names"] = strings.Join(tls.Hosts, ",")
+					}
+					certNode := models.Node{
+						ID:         certID,
+						Name:       tls.SecretName,
+						Type:       models.AssetCertificate,
+						Source:     "kubernetes",
+						SourceFile: sourceFile,
+						Provider:   "kubernetes",
+						Metadata:   certMeta,
+						LastSeen:   now,
+						FirstSeen:  now,
+					}
+					nodeMap[certID] = certNode
+					result.Nodes = append(result.Nodes, certNode)
+				}
+
+				secretToCertEdge := fmt.Sprintf("%s->depends_on->%s", secretID, certID)
+				result.Edges = append(result.Edges, models.Edge{
+					ID:       secretToCertEdge,
+					FromID:   secretID,
+					ToID:     certID,
+					Type:     models.EdgeDependsOn,
+					Metadata: map[string]string{"via": "tls_secret"},
+				})
+
+				ingressToCertEdge := fmt.Sprintf("%s->terminates_tls->%s", ingressID, certID)
+				result.Edges = append(result.Edges, models.Edge{
+					ID:     ingressToCertEdge,
+					FromID: ingressID,
+					ToID:   certID,
+					Type:   models.EdgeTerminatesTLS,
+					Metadata: map[string]string{
+						"hosts": strings.Join(tls.Hosts, ","),
+					},
+				})
 			}
 
 		case "Deployment", "StatefulSet", "DaemonSet", "ReplicaSet":
@@ -1124,4 +1229,40 @@ func serviceIDCandidatesForHost(host, defaultNamespace string) []string {
 		candidates = append(candidates, k8sNodeID("service", parts[1], serviceName))
 	}
 	return candidates
+}
+
+func extractTLSSecretExpiry(data map[string]string) (*time.Time, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+
+	rawCRT, ok := data["tls.crt"]
+	if !ok || strings.TrimSpace(rawCRT) == "" {
+		return nil, nil
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(rawCRT))
+	if err != nil {
+		return nil, fmt.Errorf("decode tls.crt: %w", err)
+	}
+
+	var cert *x509.Certificate
+	if block, _ := pem.Decode(decoded); block != nil {
+		cert, err = x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("parse pem certificate: %w", err)
+		}
+	} else {
+		cert, err = x509.ParseCertificate(decoded)
+		if err != nil {
+			return nil, fmt.Errorf("parse der certificate: %w", err)
+		}
+	}
+
+	if cert == nil {
+		return nil, nil
+	}
+
+	ts := cert.NotAfter.UTC()
+	return &ts, nil
 }

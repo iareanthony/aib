@@ -233,35 +233,35 @@ const LAYOUTS = {
     readable: {
         name: 'cose',
         animate: false,
-        nodeRepulsion: () => 22000,
-        idealEdgeLength: () => 180,
-        nodeOverlap: 24,
-        padding: 56,
-        componentSpacing: 110,
-        nestingFactor: 1.25,
-        gravity: 0.3,
+        nodeRepulsion: () => 28000,
+        idealEdgeLength: () => 200,
+        nodeOverlap: 28,
+        padding: 64,
+        componentSpacing: 200,
+        nestingFactor: 1.3,
+        gravity: 0.25,
     },
     balanced: {
         name: 'cose',
         animate: false,
-        nodeRepulsion: () => 16000,
-        idealEdgeLength: () => 140,
-        nodeOverlap: 20,
-        padding: 40,
-        componentSpacing: 60,
-        nestingFactor: 1.2,
-        gravity: 0.3,
+        nodeRepulsion: () => 20000,
+        idealEdgeLength: () => 160,
+        nodeOverlap: 24,
+        padding: 48,
+        componentSpacing: 140,
+        nestingFactor: 1.25,
+        gravity: 0.28,
     },
     compact: {
         name: 'cose',
         animate: false,
-        nodeRepulsion: () => 12000,
-        idealEdgeLength: () => 110,
-        nodeOverlap: 16,
-        padding: 28,
-        componentSpacing: 40,
-        nestingFactor: 1.1,
-        gravity: 0.35,
+        nodeRepulsion: () => 14000,
+        idealEdgeLength: () => 120,
+        nodeOverlap: 18,
+        padding: 32,
+        componentSpacing: 80,
+        nestingFactor: 1.15,
+        gravity: 0.32,
     },
 };
 
@@ -511,6 +511,70 @@ function runCurrentLayout() {
     const mode = getLayoutMode();
     const cfg = LAYOUTS[mode] || LAYOUTS.readable;
     cy.layout(cfg).run();
+    tileComponents();
+}
+
+/* ---------- Connected-component tiling ---------- */
+// After CoSE finishes, repack disconnected components into a tidy grid
+// so they don't overlap or drift into each other.
+function tileComponents() {
+    if (!cy) return;
+    // Skip tiling when compound groups are active — CoSE handles them
+    if (cy.nodes('[?isGroup]').length > 0) return;
+
+    const components = cy.elements().components();
+    if (components.length <= 1) return;  // nothing to tile
+
+    // Measure bounding box of each component
+    const boxes = components.map(comp => {
+        const bb = comp.boundingBox();
+        return { comp, w: bb.w, h: bb.h, cx: (bb.x1 + bb.x2) / 2, cy: (bb.y1 + bb.y2) / 2 };
+    });
+
+    // Sort largest-area first for nicer packing
+    boxes.sort((a, b) => (b.w * b.h) - (a.w * a.h));
+
+    const gap = 120;  // px between components
+    const cols = Math.ceil(Math.sqrt(boxes.length));
+
+    // Compute column widths and row heights
+    const colWidths = new Array(cols).fill(0);
+    const rows = Math.ceil(boxes.length / cols);
+    const rowHeights = new Array(rows).fill(0);
+    boxes.forEach((b, i) => {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        colWidths[col] = Math.max(colWidths[col], b.w);
+        rowHeights[row] = Math.max(rowHeights[row], b.h);
+    });
+
+    // Place each component in its grid cell center
+    cy.batch(() => {
+        boxes.forEach((b, i) => {
+            const col = i % cols;
+            const row = Math.floor(i / cols);
+
+            // Target cell center
+            let tx = 0;
+            for (let c = 0; c < col; c++) tx += colWidths[c] + gap;
+            tx += colWidths[col] / 2;
+
+            let ty = 0;
+            for (let r = 0; r < row; r++) ty += rowHeights[r] + gap;
+            ty += rowHeights[row] / 2;
+
+            const dx = tx - b.cx;
+            const dy = ty - b.cy;
+
+            // Shift all nodes in this component
+            b.comp.nodes().forEach(n => {
+                const pos = n.position();
+                n.position({ x: pos.x + dx, y: pos.y + dy });
+            });
+        });
+    });
+
+    cy.fit(undefined, 40);
 }
 
 function applyDeclutterMode() {
@@ -542,6 +606,11 @@ function getNodeLabel(ele) {
         return maskSensitive(ele.data('label'));
     }
     return ele.data('label');
+}
+
+function truncateLabel(str) {
+    if (!str) return '';
+    return str.length > 18 ? str.slice(0, 16) + '…' : str;
 }
 
 function togglePrivacyMode() {
@@ -761,7 +830,10 @@ async function init() {
     applyResourceSearchFilter();
 
     // Build Cytoscape elements
-    const elements = buildElements(graphData, '');
+    // Default to source grouping for a tidier view
+    const defaultGroupBy = '';
+    document.getElementById('group-by').value = defaultGroupBy;
+    const elements = buildElements(graphData, defaultGroupBy);
 
     cy = cytoscape({
         container: document.getElementById('cy'),
@@ -770,7 +842,7 @@ async function init() {
             {
                 selector: 'node[!isGroup]',
                 style: {
-                    'label': function(ele) { return getNodeLabel(ele); },
+                    'label': function(ele) { return truncateLabel(getNodeLabel(ele)); },
                     'shape': el => TYPE_SHAPES[el.data('assetType')] || 'ellipse',
                     'background-color': el => TYPE_COLORS[el.data('assetType')] || '#D5D8DC',
                     'color': '#c9d1d9',
@@ -870,6 +942,14 @@ async function init() {
         layout: LAYOUTS[getLayoutMode()] || LAYOUTS.readable,
     });
 
+    // Tile disconnected components into a grid after initial layout
+    tileComponents();
+
+    // Set group node background colors
+    cy.nodes('[?isGroup]').forEach(n => {
+        n.style('background-color', n.data('bgColor') || '#1f3044');
+    });
+
     applyDeclutterMode();
 
     // Update visible count after initial build
@@ -944,6 +1024,12 @@ async function init() {
 
     // Reset
     document.getElementById('btn-reset').addEventListener('click', resetView);
+
+    // Quick filter: certificates
+    document.getElementById('btn-certs').addEventListener('click', () => {
+        document.getElementById('filter-type').value = 'certificate';
+        applyNodeVisibilityFilters();
+    });
 
     // Close panel
     document.getElementById('close-panel').addEventListener('click', () => {
