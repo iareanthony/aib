@@ -95,7 +95,7 @@ func ExportMermaid(ctx context.Context, store Store) (string, error) {
 	for _, e := range edges {
 		fromID := mermaidSafeID(e.FromID)
 		toID := mermaidSafeID(e.ToID)
-		b.WriteString(fmt.Sprintf("  %s -->|%s| %s\n", fromID, e.Type, toID))
+		fmt.Fprintf(&b, "  %s -->|%s| %s\n", fromID, e.Type, toID)
 	}
 
 	return b.String(), nil
