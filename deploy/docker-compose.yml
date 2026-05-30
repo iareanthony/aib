@@ -26,7 +26,7 @@ services:
     environment:
       - MEMGRAPH_TELEMETRY_ENABLED=false
     healthcheck:
-      test: ["CMD-SHELL", "echo > /dev/tcp/127.0.0.1/7687"]
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/127.0.0.1/7687"]
       interval: 5s
       timeout: 5s
       retries: 10
