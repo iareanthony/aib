@@ -49,7 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: matijazezelj/aib@v1.4.3
+      - uses: matijazezelj/aib@v1.4.4
         with:
           paths: .
           sources: auto
