@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -276,6 +277,74 @@ func TestRateLimiter_EmptyRemoteAddr(t *testing.T) {
 	}
 }
 
+func TestRateLimiter_ExceedsBurst(t *testing.T) {
+	s := &Server{done: make(chan struct{})}
+	handler := s.rateLimiter(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Burst is 20; hammer well past it and expect at least one 429.
+	var limited int
+	for i := 0; i < 40; i++ {
+		req := httptest.NewRequest("GET", "/api/v1/stats", nil)
+		req.RemoteAddr = "10.0.0.1:12345"
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code == http.StatusTooManyRequests {
+			limited++
+		}
+	}
+	if limited == 0 {
+		t.Error("expected some requests to be rate limited after exceeding burst")
+	}
+}
+
+func TestRateLimiter_PerIPBuckets(t *testing.T) {
+	s := &Server{done: make(chan struct{})}
+	handler := s.rateLimiter(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Exhaust the bucket for one IP...
+	for i := 0; i < 40; i++ {
+		req := httptest.NewRequest("GET", "/api/v1/stats", nil)
+		req.RemoteAddr = "10.0.0.2:12345"
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	// ...a different IP must still be served.
+	req := httptest.NewRequest("GET", "/api/v1/stats", nil)
+	req.RemoteAddr = "10.0.0.3:12345"
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 (limits are per client IP)", rr.Code)
+	}
+}
+
+func TestRateLimiter_IgnoresForwardedFor(t *testing.T) {
+	s := &Server{done: make(chan struct{})}
+	handler := s.rateLimiter(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// A client must not escape its bucket by rotating X-Forwarded-For values.
+	var limited int
+	for i := 0; i < 40; i++ {
+		req := httptest.NewRequest("GET", "/api/v1/stats", nil)
+		req.RemoteAddr = "10.0.0.4:12345"
+		req.Header.Set("X-Forwarded-For", fmt.Sprintf("192.0.2.%d", i))
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code == http.StatusTooManyRequests {
+			limited++
+		}
+	}
+	if limited == 0 {
+		t.Error("X-Forwarded-For must not be trusted for rate-limit bucketing")
+	}
+}
+
 func TestAuthMiddleware_NoToken(t *testing.T) {
 	s := &Server{apiToken: ""}
 	handler := s.authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -338,4 +407,3 @@ func TestAuthMiddleware_NonAPIPath(t *testing.T) {
 		t.Errorf("status = %d, want 200 (non-API bypasses auth)", rr.Code)
 	}
 }
-

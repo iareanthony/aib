@@ -52,7 +52,9 @@ jobs:
           go-version-file: go.mod
 
       - name: Install gosec
-        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+        # Pinned so a new gosec release can't break CI for unrelated PRs;
+        # bump deliberately.
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.27.1
 
       - name: Run gosec
         run: gosec -exclude-generated ./...

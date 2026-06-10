@@ -129,13 +129,13 @@ Impact Analysis: tf:network:prod-vpc
 
 ### Security Audit
 
-Runs 15 checks across three severities:
+Runs 20 checks across three severities:
 
 | Severity | Checks |
 |----------|--------|
-| **Critical** | Public databases, unencrypted storage, world-open firewall rules, privileged containers, host namespace usage |
-| **Warning** | No deletion protection, single-AZ databases, public buckets, public load balancers, public VMs, privilege escalation, root execution, unencrypted ingress |
-| **Info** | Orphan secrets, missing container resource limits, absent encryption config |
+| **Critical** | Public databases, unencrypted storage, world-open firewall rules, public buckets, privileged containers, host namespace usage |
+| **Warning** | No deletion protection, single-AZ databases, public VMs, privilege escalation, root execution, unencrypted ingress, mutable (`latest`) container images |
+| **Info** | Public load balancers, orphan secrets, writable root filesystems, missing container resource limits, absent encryption config, Compose services without `init`, exposed services without healthchecks |
 
 ```bash
 aib graph audit
@@ -251,7 +251,7 @@ aib graph sync   # sync existing data
 
 - **No cloud credentials required** — AIB parses IaC files that already exist in your repo; it never calls cloud APIs.
 - **Multi-source in one graph** — Terraform, Kubernetes, Ansible, Compose, CloudFormation, and Pulumi assets land in a single unified graph, enabling cross-stack blast-radius analysis.
-- **All-in-one binary** — drift detection, TLS certificate tracking, security audit (15 checks), SPOF/cycle/orphan analysis, and a web UI ship in a single ~15 MB binary with zero external dependencies (SQLite is embedded).
+- **All-in-one binary** — drift detection, TLS certificate tracking, security audit (20 checks), SPOF/cycle/orphan analysis, and a web UI ship in a single ~15 MB binary with zero external dependencies (SQLite is embedded).
 - **Cartography / CloudQuery / Steampipe** excel at live cloud inventory but require API credentials, a running database, and don't parse IaC.
 - **inframap / Rover / `terraform graph`** visualise Terraform only and don't analyse blast radius, drift, or security posture.
 

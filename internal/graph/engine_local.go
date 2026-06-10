@@ -242,22 +242,21 @@ func normalizeCycle(cycle []string) []string {
 }
 
 // FindSPOF identifies single points of failure by computing blast radius for each node.
+// The adjacency lists and node set are loaded once and reused across all
+// traversals, so this is O(V*(V+E)) in memory rather than O(V) database scans.
 func (e *LocalEngine) FindSPOF(ctx context.Context, minAffected int) ([]SPOFNode, error) {
-	nodes, err := e.store.ListNodes(ctx, NodeFilter{})
+	adj, err := loadAdjacency(ctx, e.store)
 	if err != nil {
 		return nil, err
 	}
 
 	var results []SPOFNode
-	for _, n := range nodes {
-		result, err := e.BlastRadius(ctx, n.ID)
-		if err != nil {
-			continue
-		}
+	for i := range adj.nodes {
+		n := &adj.nodes[i]
+		result := adj.blastRadius(n.ID)
 		if result.AffectedNodes >= minAffected {
-			nodeCopy := n
 			results = append(results, SPOFNode{
-				Node:           &nodeCopy,
+				Node:           n,
 				AffectedCount:  result.AffectedNodes,
 				AffectedByType: result.AffectedByType,
 			})
@@ -265,7 +264,10 @@ func (e *LocalEngine) FindSPOF(ctx context.Context, minAffected int) ([]SPOFNode
 	}
 
 	sort.Slice(results, func(i, j int) bool {
-		return results[i].AffectedCount > results[j].AffectedCount
+		if results[i].AffectedCount != results[j].AffectedCount {
+			return results[i].AffectedCount > results[j].AffectedCount
+		}
+		return results[i].Node.ID < results[j].Node.ID // deterministic order on ties
 	})
 
 	return results, nil

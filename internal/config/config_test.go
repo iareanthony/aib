@@ -111,7 +111,7 @@ alerts:
   stdout:
     enabled: false
 scan:
-  schedule: "0 */6 * * *"
+  schedule: "6h"
   on_startup: false
 `
 	tmpFile := t.TempDir() + "/aib.yaml"
@@ -163,7 +163,7 @@ scan:
 	if cfg.Alerts.Stdout.Enabled {
 		t.Error("stdout should be disabled")
 	}
-	if cfg.Scan.Schedule != "0 */6 * * *" {
+	if cfg.Scan.Schedule != "6h" {
 		t.Errorf("scan.schedule = %q", cfg.Scan.Schedule)
 	}
 	if cfg.Scan.OnStartup {
@@ -282,11 +282,15 @@ func TestValidate_InvalidScanSchedule(t *testing.T) {
 	}
 }
 
-func TestValidate_CronScheduleAllowed(t *testing.T) {
+func TestValidate_CronScheduleRejected(t *testing.T) {
 	cfg, _ := loadDefaults()
 	cfg.Scan.Schedule = "0 */6 * * *"
-	if err := cfg.Validate(); err != nil {
-		t.Errorf("cron schedule should be allowed, got: %v", err)
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("cron schedule should be rejected (scheduler only supports Go durations)")
+	}
+	if !strings.Contains(err.Error(), "cron") || !strings.Contains(err.Error(), "duration") {
+		t.Errorf("error %q should explain cron is unsupported and suggest duration format", err)
 	}
 }
 

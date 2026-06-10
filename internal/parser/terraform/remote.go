@@ -13,6 +13,12 @@ import (
 	"github.com/matijazezelj/aib/pkg/models"
 )
 
+// commandWaitDelay bounds how long a cancelled terraform command may hold its
+// I/O pipes open (e.g. via orphaned child processes) before Wait gives up.
+// Without it, a killed terraform that left children behind would block Run()
+// far past the context deadline.
+const commandWaitDelay = 5 * time.Second
+
 // pulledState holds raw bytes pulled from a remote backend, tagged with a label.
 type pulledState struct {
 	label string // e.g. "project-a" or "project-a/staging"
@@ -30,6 +36,7 @@ func pullStateBytes(ctx context.Context, projectDir, workspace string) ([]byte, 
 
 	if workspace != "" {
 		wsCmd := exec.CommandContext(ctx, "terraform", fmt.Sprintf("-chdir=%s", projectDir), "workspace", "select", workspace) // #nosec G204 -- args are constructed internally
+		wsCmd.WaitDelay = commandWaitDelay
 		var wsErr bytes.Buffer
 		wsCmd.Stderr = &wsErr
 		if err := wsCmd.Run(); err != nil {
@@ -38,6 +45,7 @@ func pullStateBytes(ctx context.Context, projectDir, workspace string) ([]byte, 
 	}
 
 	pullCmd := exec.CommandContext(ctx, "terraform", fmt.Sprintf("-chdir=%s", projectDir), "state", "pull") // #nosec G204 -- args are constructed internally
+	pullCmd.WaitDelay = commandWaitDelay
 	var stdout, stderr bytes.Buffer
 	pullCmd.Stdout = &stdout
 	pullCmd.Stderr = &stderr
@@ -136,6 +144,7 @@ func ListWorkspaces(ctx context.Context, projectDir string) ([]string, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "terraform", fmt.Sprintf("-chdir=%s", projectDir), "workspace", "list") // #nosec G204 -- args are constructed internally
+	cmd.WaitDelay = commandWaitDelay
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

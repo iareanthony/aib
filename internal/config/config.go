@@ -15,12 +15,12 @@ import (
 
 // Config holds all AIB configuration loaded from file and environment.
 type Config struct {
-	Storage StorageConfig          `mapstructure:"storage"`
-	Sources SourcesConfig          `mapstructure:"sources"`
-	Certs   CertsConfig            `mapstructure:"certs"`
-	Alerts  AlertsConfig           `mapstructure:"alerts"`
-	Server  ServerConfig           `mapstructure:"server"`
-	Scan    ScanConfig             `mapstructure:"scan"`
+	Storage StorageConfig `mapstructure:"storage"`
+	Sources SourcesConfig `mapstructure:"sources"`
+	Certs   CertsConfig   `mapstructure:"certs"`
+	Alerts  AlertsConfig  `mapstructure:"alerts"`
+	Server  ServerConfig  `mapstructure:"server"`
+	Scan    ScanConfig    `mapstructure:"scan"`
 }
 
 // StorageConfig configures the SQLite database and optional Memgraph connection.
@@ -262,12 +262,14 @@ func (c *Config) Validate() error {
 
 	if c.Scan.Schedule != "" {
 		d, err := time.ParseDuration(c.Scan.Schedule)
-		if err != nil {
-			// Skip cron expressions (they contain spaces)
-			if !strings.Contains(c.Scan.Schedule, " ") {
-				errs = append(errs, fmt.Errorf("scan.schedule %q is not a valid duration: %w", c.Scan.Schedule, err))
-			}
-		} else if d < time.Minute {
+		switch {
+		case err != nil && strings.Contains(c.Scan.Schedule, " "):
+			// Cron expressions used to be silently accepted here but the
+			// scheduler only understands Go durations, so they failed at startup.
+			errs = append(errs, fmt.Errorf("scan.schedule %q looks like a cron expression; cron schedules are not supported, use Go duration format (e.g. 4h, 30m, 1h30m)", c.Scan.Schedule))
+		case err != nil:
+			errs = append(errs, fmt.Errorf("scan.schedule %q is not a valid duration: %w", c.Scan.Schedule, err))
+		case d < time.Minute:
 			errs = append(errs, fmt.Errorf("scan.schedule must be >= 1m, got %s", d))
 		}
 	}
