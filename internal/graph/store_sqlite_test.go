@@ -10,7 +10,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func newTestStore(t *testing.T) *SQLiteStore {
+func newTestStore(t testing.TB) *SQLiteStore {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:?_pragma=foreign_keys(1)")
 	if err != nil {
@@ -43,7 +43,7 @@ func makeEdge(from, to string, typ models.EdgeType) models.Edge {
 	}
 }
 
-func buildTestGraph(t *testing.T, store *SQLiteStore, nodes []models.Node, edges []models.Edge) {
+func buildTestGraph(t testing.TB, store *SQLiteStore, nodes []models.Node, edges []models.Edge) {
 	t.Helper()
 	ctx := context.Background()
 	for _, n := range nodes {

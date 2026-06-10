@@ -3,7 +3,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
 GOFLAGS := -trimpath
 
-.PHONY: build run test clean fmt lint docker
+.PHONY: build run test test-verbose clean fmt lint docker
 
 build:
 	go build $(GOFLAGS) $(LDFLAGS) -o bin/$(BINARY) ./cmd/aib
@@ -11,8 +11,13 @@ build:
 run: build
 	./bin/$(BINARY)
 
+# Mirrors the CI test invocation (race detector + timeout) so local runs
+# catch what CI catches.
 test:
-	go test ./... -v -count=1
+	go test -timeout 60s -race -count=1 ./...
+
+test-verbose:
+	go test -timeout 60s -race -count=1 -v ./...
 
 clean:
 	rm -rf bin/ data/

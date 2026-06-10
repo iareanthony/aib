@@ -25,15 +25,47 @@ type ImpactNode struct {
 	Children     []ImpactNode    `json:"children,omitempty"`
 }
 
-// BlastRadius performs a BFS traversal from the start node to find all affected nodes.
-// It traverses in reverse: finds nodes that depend ON the start node (upstream edges),
-// since if X fails, everything that depends on X is affected.
-func BlastRadius(ctx context.Context, store *SQLiteStore, startNodeID string) (*ImpactResult, error) {
-	_, upstream, err := store.BuildAdjacency(ctx)
+// adjacency holds prebuilt edge maps and a node lookup so traversals can run
+// entirely in memory, without per-visited-node store queries.
+type adjacency struct {
+	downstream map[string][]models.Edge // from_id → edges
+	upstream   map[string][]models.Edge // to_id → edges
+	nodeByID   map[string]*models.Node
+	nodes      []models.Node // all nodes, in store order (deterministic)
+}
+
+// loadAdjacency fetches all edges and nodes once and builds the in-memory
+// adjacency structure. Callers that traverse repeatedly (e.g. FindSPOF)
+// should load this once and reuse it.
+func loadAdjacency(ctx context.Context, store *SQLiteStore) (*adjacency, error) {
+	downstream, upstream, err := store.BuildAdjacency(ctx)
 	if err != nil {
 		return nil, err
 	}
 
+	nodes, err := store.ListNodes(ctx, NodeFilter{})
+	if err != nil {
+		return nil, err
+	}
+
+	nodeByID := make(map[string]*models.Node, len(nodes))
+	for i := range nodes {
+		nodeByID[nodes[i].ID] = &nodes[i]
+	}
+
+	return &adjacency{
+		downstream: downstream,
+		upstream:   upstream,
+		nodeByID:   nodeByID,
+		nodes:      nodes,
+	}, nil
+}
+
+// blastRadius performs a BFS traversal from the start node to find all
+// affected nodes, using only the prebuilt adjacency (no store access).
+// It traverses in reverse: finds nodes that depend ON the start node
+// (upstream edges), since if X fails, everything that depends on X is affected.
+func (a *adjacency) blastRadius(startNodeID string) *ImpactResult {
 	visited := make(map[string]bool)
 	impactTree := make(map[string]ImpactNode)
 	parentMap := make(map[string]string)
@@ -52,7 +84,7 @@ func BlastRadius(ctx context.Context, store *SQLiteStore, startNodeID string) (*
 
 		// upstream[nodeID] = edges where to_id == nodeID, meaning these are
 		// nodes that point TO current (i.e., they depend on current).
-		edges := upstream[current.nodeID]
+		edges := a.upstream[current.nodeID]
 		for _, edge := range edges {
 			target := edge.FromID // the node that depends on current
 			if visited[target] {
@@ -61,12 +93,10 @@ func BlastRadius(ctx context.Context, store *SQLiteStore, startNodeID string) (*
 			visited[target] = true
 			parentMap[target] = current.nodeID
 
-			node, _ := store.GetNode(ctx, target)
-
 			path := reconstructPath(parentMap, startNodeID, target)
 			impactTree[target] = ImpactNode{
 				NodeID:       target,
-				Node:         node,
+				Node:         a.nodeByID[target],
 				EdgeType:     edge.Type,
 				Depth:        current.depth + 1,
 				PathFromRoot: path,
@@ -94,18 +124,24 @@ func BlastRadius(ctx context.Context, store *SQLiteStore, startNodeID string) (*
 		ImpactTree:     impactTree,
 		AffectedByType: affectedByType,
 		Nodes:          nodes,
-	}, nil
+	}
+}
+
+// BlastRadius performs a BFS traversal from the start node to find all affected nodes.
+// It traverses in reverse: finds nodes that depend ON the start node (upstream edges),
+// since if X fails, everything that depends on X is affected.
+func BlastRadius(ctx context.Context, store *SQLiteStore, startNodeID string) (*ImpactResult, error) {
+	adj, err := loadAdjacency(ctx, store)
+	if err != nil {
+		return nil, err
+	}
+	return adj.blastRadius(startNodeID), nil
 }
 
 // BlastRadiusTree returns the impact result as a tree structure rooted at the start node.
 // Traverses upstream: finds all nodes that depend on the start node.
 func BlastRadiusTree(ctx context.Context, store *SQLiteStore, startNodeID string) (*ImpactNode, error) {
-	_, upstream, err := store.BuildAdjacency(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	rootNode, err := store.GetNode(ctx, startNodeID)
+	adj, err := loadAdjacency(ctx, store)
 	if err != nil {
 		return nil, err
 	}
@@ -113,19 +149,19 @@ func BlastRadiusTree(ctx context.Context, store *SQLiteStore, startNodeID string
 	visited := make(map[string]bool)
 	root := &ImpactNode{
 		NodeID: startNodeID,
-		Node:   rootNode,
+		Node:   adj.nodeByID[startNodeID],
 		Depth:  0,
 	}
 
 	visited[startNodeID] = true
-	buildTree(ctx, store, root, upstream, visited, 0)
+	adj.buildTree(root, visited, 0)
 
 	return root, nil
 }
 
-func buildTree(ctx context.Context, store *SQLiteStore, parent *ImpactNode, upstream map[string][]models.Edge, visited map[string]bool, depth int) {
+func (a *adjacency) buildTree(parent *ImpactNode, visited map[string]bool, depth int) {
 	// upstream[nodeID] = edges where to_id == nodeID (nodes that point to this one)
-	edges := upstream[parent.NodeID]
+	edges := a.upstream[parent.NodeID]
 	for _, edge := range edges {
 		target := edge.FromID // the node that depends on parent
 		if visited[target] {
@@ -133,15 +169,14 @@ func buildTree(ctx context.Context, store *SQLiteStore, parent *ImpactNode, upst
 		}
 		visited[target] = true
 
-		node, _ := store.GetNode(ctx, target)
 		child := ImpactNode{
 			NodeID:   target,
-			Node:     node,
+			Node:     a.nodeByID[target],
 			EdgeType: edge.Type,
 			Depth:    depth + 1,
 		}
 
-		buildTree(ctx, store, &child, upstream, visited, depth+1)
+		a.buildTree(&child, visited, depth+1)
 		parent.Children = append(parent.Children, child)
 	}
 }

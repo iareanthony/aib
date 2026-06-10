@@ -1128,13 +1128,18 @@ func TestTriggerScan_ValidSource_WithScanner(t *testing.T) {
 		t.Errorf("status = %d, want 202, body: %s", resp.StatusCode, bodyBytes)
 	}
 
-	// Wait a bit for async scan to finish
-	time.Sleep(500 * time.Millisecond)
-
-	// Verify nodes were stored
-	nodes, _ := store.ListNodes(context.Background(), graph.NodeFilter{})
-	if len(nodes) == 0 {
-		t.Error("expected nodes after scan")
+	// Poll until the async scan stores nodes — a fixed sleep is flaky on slow
+	// machines and wastes time on fast ones.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		nodes, err := store.ListNodes(context.Background(), graph.NodeFilter{})
+		if err == nil && len(nodes) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected nodes after scan within 10s (nodes=%d, err=%v)", len(nodes), err)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/matijazezelj/aib/pkg/models"
@@ -398,6 +399,142 @@ func TestFindSPOF_EmptyGraph(t *testing.T) {
 	}
 	if len(spofs) != 0 {
 		t.Errorf("spofs = %d, want 0", len(spofs))
+	}
+}
+
+func TestBlastRadius_HydratesNodes(t *testing.T) {
+	_, engine := buildLinearGraph(t)
+
+	result, err := engine.BlastRadius(context.Background(), "C")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, impact := range result.ImpactTree {
+		if impact.Node == nil {
+			t.Errorf("impact node %s has no hydrated Node", id)
+		} else if impact.Node.ID != id {
+			t.Errorf("impact node %s hydrated with wrong node %s", id, impact.Node.ID)
+		}
+	}
+	if result.AffectedByType["vm"] != 1 {
+		t.Errorf("affected vm = %d, want 1", result.AffectedByType["vm"])
+	}
+	if result.AffectedByType["network"] != 1 {
+		t.Errorf("affected network = %d, want 1", result.AffectedByType["network"])
+	}
+}
+
+func TestFindSPOF_HydratesNodesAndTypes(t *testing.T) {
+	store := newTestStore(t)
+	buildTestGraph(t, store,
+		[]models.Node{
+			makeNode("A", models.AssetVM, "tf"),
+			makeNode("B", models.AssetVM, "tf"),
+			makeNode("C", models.AssetNetwork, "tf"),
+		},
+		[]models.Edge{
+			makeEdge("A", "C", models.EdgeDependsOn),
+			makeEdge("B", "C", models.EdgeDependsOn),
+		},
+	)
+	engine := NewLocalEngine(store)
+
+	spofs, err := engine.FindSPOF(context.Background(), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spofs) != 1 {
+		t.Fatalf("spofs = %d, want 1", len(spofs))
+	}
+	if spofs[0].Node == nil || spofs[0].Node.ID != "C" {
+		t.Fatalf("spof node = %+v, want C", spofs[0].Node)
+	}
+	if spofs[0].AffectedByType["vm"] != 2 {
+		t.Errorf("affected vm = %d, want 2", spofs[0].AffectedByType["vm"])
+	}
+}
+
+func TestFindSPOF_DeterministicTieOrder(t *testing.T) {
+	store := newTestStore(t)
+	// Two independent hubs with identical blast radius (1 each).
+	buildTestGraph(t, store,
+		[]models.Node{
+			makeNode("A", models.AssetVM, "tf"),
+			makeNode("B", models.AssetVM, "tf"),
+			makeNode("C", models.AssetNetwork, "tf"),
+			makeNode("D", models.AssetNetwork, "tf"),
+		},
+		[]models.Edge{
+			makeEdge("A", "C", models.EdgeDependsOn),
+			makeEdge("B", "D", models.EdgeDependsOn),
+		},
+	)
+	engine := NewLocalEngine(store)
+
+	for i := 0; i < 5; i++ {
+		spofs, err := engine.FindSPOF(context.Background(), 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(spofs) != 2 {
+			t.Fatalf("spofs = %d, want 2", len(spofs))
+		}
+		if spofs[0].Node.ID != "C" || spofs[1].Node.ID != "D" {
+			t.Fatalf("order = [%s %s], want [C D] (ties sorted by node ID)", spofs[0].Node.ID, spofs[1].Node.ID)
+		}
+	}
+}
+
+// benchGraphChain builds a linear dependency chain node-000 ← node-001 ← … so
+// blast radius grows with chain position, exercising the worst-case traversal.
+func benchGraphChain(b *testing.B, n int) *LocalEngine {
+	b.Helper()
+	store := newTestStore(b)
+	nodes := make([]models.Node, 0, n)
+	edges := make([]models.Edge, 0, n-1)
+	for i := 0; i < n; i++ {
+		nodes = append(nodes, makeNode(fmt.Sprintf("node-%04d", i), models.AssetVM, "tf"))
+		if i > 0 {
+			edges = append(edges, makeEdge(fmt.Sprintf("node-%04d", i), fmt.Sprintf("node-%04d", i-1), models.EdgeDependsOn))
+		}
+	}
+	buildTestGraph(b, store, nodes, edges)
+	return NewLocalEngine(store)
+}
+
+// BenchmarkFindSPOF guards against reintroducing per-node database queries in
+// the SPOF scan: with the shared adjacency the loop body is pure in-memory BFS.
+func BenchmarkFindSPOF(b *testing.B) {
+	const n = 150
+	engine := benchGraphChain(b, n)
+	ctx := context.Background()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		spofs, err := engine.FindSPOF(ctx, 1)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(spofs) != n-1 {
+			b.Fatalf("spofs = %d, want %d", len(spofs), n-1)
+		}
+	}
+}
+
+func BenchmarkBlastRadius(b *testing.B) {
+	const n = 500
+	engine := benchGraphChain(b, n)
+	ctx := context.Background()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		result, err := engine.BlastRadius(ctx, "node-0000")
+		if err != nil {
+			b.Fatal(err)
+		}
+		if result.AffectedNodes != n-1 {
+			b.Fatalf("affected = %d, want %d", result.AffectedNodes, n-1)
+		}
 	}
 }
 

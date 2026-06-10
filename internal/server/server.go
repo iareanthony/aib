@@ -109,6 +109,15 @@ func (s *Server) startLimiterCleanup() {
 }
 
 // rateLimiter limits API requests to 10/sec burst 20 per client IP.
+//
+// The client IP is taken from the TCP peer address (r.RemoteAddr), never from
+// X-Forwarded-For or similar headers — those are client-controlled and trusting
+// them by default would let any client pick its own rate-limit bucket. The
+// trade-off: when AIB runs behind a reverse proxy, all requests share the
+// proxy's bucket. If that matters for your deployment, raise the limit or
+// terminate rate limiting at the proxy.
+// TODO: add an opt-in trusted_proxies config option that enables X-Forwarded-For
+// parsing only for connections from listed proxy addresses.
 func (s *Server) rateLimiter(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/api/") {
@@ -193,11 +202,12 @@ func (s *Server) Start() error {
 	s.startLimiterCleanup()
 
 	s.srv = &http.Server{
-		Addr:         s.listen,
-		Handler:      handler,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:              s.listen,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second, // mitigate slowloris-style header dribbling
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	s.logger.Info("starting server", "listen", s.listen)
