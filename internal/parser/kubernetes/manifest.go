@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	"fmt"
 	"net"
 	"net/url"
-	"encoding/pem"
 	"strings"
 	"time"
 
@@ -19,13 +19,13 @@ import (
 // k8sResource is a lightweight representation of a Kubernetes resource,
 // parsed without importing the full k8s API types.
 type k8sResource struct {
-	APIVersion string      `yaml:"apiVersion"`
-	Kind       string      `yaml:"kind"`
-	Metadata   k8sMeta     `yaml:"metadata"`
-	Spec       k8sSpec     `yaml:"spec"`
-	Type       string      `yaml:"type"`
+	APIVersion string            `yaml:"apiVersion"`
+	Kind       string            `yaml:"kind"`
+	Metadata   k8sMeta           `yaml:"metadata"`
+	Spec       k8sSpec           `yaml:"spec"`
+	Type       string            `yaml:"type"`
 	Data       map[string]string `yaml:"data"`
-	Status     k8sStatus   `yaml:"status"`
+	Status     k8sStatus         `yaml:"status"`
 
 	// RBAC: RoleBinding/ClusterRoleBinding top-level fields
 	RoleRef  *k8sRoleRef  `yaml:"roleRef"`
@@ -45,8 +45,8 @@ type k8sMeta struct {
 
 type k8sSpec struct {
 	// Service selector (flat map) or Deployment selector (matchLabels)
-	Selector k8sSelector `yaml:"selector"`
-	Type     string      `yaml:"type"`
+	Selector k8sSelector      `yaml:"selector"`
+	Type     string           `yaml:"type"`
 	Ports    []k8sServicePort `yaml:"ports"`
 
 	// Ingress
@@ -63,8 +63,8 @@ type k8sSpec struct {
 	DNSNames   []string `yaml:"dnsNames"`
 
 	// Job / CronJob
-	Schedule    string      `yaml:"schedule"`
-	JobTemplate k8sJobTmpl  `yaml:"jobTemplate"`
+	Schedule    string     `yaml:"schedule"`
+	JobTemplate k8sJobTmpl `yaml:"jobTemplate"`
 
 	// HPA
 	ScaleTargetRef *k8sScaleTargetRef `yaml:"scaleTargetRef"`
@@ -72,8 +72,8 @@ type k8sSpec struct {
 	MaxReplicas    int                `yaml:"maxReplicas"`
 
 	// NetworkPolicy
-	PodSelector *k8sPodSelector  `yaml:"podSelector"`
-	PolicyTypes []string         `yaml:"policyTypes"`
+	PodSelector *k8sPodSelector `yaml:"podSelector"`
+	PolicyTypes []string        `yaml:"policyTypes"`
 }
 
 // k8sSelector handles both Service selector (flat map) and Deployment selector ({matchLabels}).
@@ -110,15 +110,15 @@ func (s k8sSelector) GetLabels() map[string]string {
 }
 
 type k8sServicePort struct {
-	Name       string `yaml:"name"`
-	Port       int    `yaml:"port"`
+	Name       string      `yaml:"name"`
+	Port       int         `yaml:"port"`
 	TargetPort interface{} `yaml:"targetPort"`
-	Protocol   string `yaml:"protocol"`
+	Protocol   string      `yaml:"protocol"`
 }
 
 type k8sIngressRule struct {
-	Host string        `yaml:"host"`
-	HTTP *k8sHTTPRule  `yaml:"http"`
+	Host string       `yaml:"host"`
+	HTTP *k8sHTTPRule `yaml:"http"`
 }
 
 type k8sHTTPRule struct {
@@ -126,8 +126,8 @@ type k8sHTTPRule struct {
 }
 
 type k8sHTTPPath struct {
-	Path    string         `yaml:"path"`
-	Backend k8sBackend     `yaml:"backend"`
+	Path    string     `yaml:"path"`
+	Backend k8sBackend `yaml:"backend"`
 }
 
 type k8sBackend struct {
@@ -146,18 +146,18 @@ type k8sIngressTLS struct {
 }
 
 type k8sPodSpec struct {
-	Metadata k8sMeta         `yaml:"metadata"`
+	Metadata k8sMeta          `yaml:"metadata"`
 	Spec     k8sContainerSpec `yaml:"spec"`
 }
 
 type k8sContainerSpec struct {
-	Containers     []k8sContainer `yaml:"containers"`
-	InitContainers []k8sContainer `yaml:"initContainers"`
-	Volumes        []k8sVolume    `yaml:"volumes"`
-	HostNetwork    bool           `yaml:"hostNetwork"`
-	HostPID        bool           `yaml:"hostPID"`
-	HostIPC        bool           `yaml:"hostIPC"`
-	ServiceAccountName string     `yaml:"serviceAccountName"`
+	Containers         []k8sContainer `yaml:"containers"`
+	InitContainers     []k8sContainer `yaml:"initContainers"`
+	Volumes            []k8sVolume    `yaml:"volumes"`
+	HostNetwork        bool           `yaml:"hostNetwork"`
+	HostPID            bool           `yaml:"hostPID"`
+	HostIPC            bool           `yaml:"hostIPC"`
+	ServiceAccountName string         `yaml:"serviceAccountName"`
 }
 
 type k8sSecurityContext struct {
@@ -174,7 +174,7 @@ type k8sContainer struct {
 	Ports           []k8sPort           `yaml:"ports"`
 	EnvFrom         []k8sEnvFrom        `yaml:"envFrom"`
 	Env             []k8sEnv            `yaml:"env"`
-	SecurityContext *k8sSecurityContext  `yaml:"securityContext"`
+	SecurityContext *k8sSecurityContext `yaml:"securityContext"`
 }
 
 type k8sPort struct {
@@ -188,8 +188,8 @@ type k8sEnvFrom struct {
 }
 
 type k8sEnv struct {
-	Name      string       `yaml:"name"`
-	Value     string       `yaml:"value"`
+	Name      string        `yaml:"name"`
+	Value     string        `yaml:"value"`
 	ValueFrom *k8sValueFrom `yaml:"valueFrom"`
 }
 
@@ -208,8 +208,8 @@ type k8sRef struct {
 }
 
 type k8sVolume struct {
-	Name      string          `yaml:"name"`
-	Secret    *k8sVolSecret   `yaml:"secret"`
+	Name      string           `yaml:"name"`
+	Secret    *k8sVolSecret    `yaml:"secret"`
 	ConfigMap *k8sVolConfigMap `yaml:"configMap"`
 }
 
@@ -294,7 +294,7 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 	}
 
 	// First pass: create all nodes so we can resolve references.
-	nodeMap := make(map[string]models.Node)    // nodeID → node
+	nodeMap := make(map[string]models.Node)              // nodeID → node
 	workloadLabels := make(map[string]map[string]string) // nodeID → pod template labels
 	serviceIDs := make(map[string]bool)
 	configMapData := make(map[string]map[string]string)
@@ -492,13 +492,13 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 						SourceFile: sourceFile,
 						Provider:   "kubernetes",
 						Metadata: map[string]string{
-							"namespace":            ns,
-							"derived_from_secret":  "true",
-							"secret_name":          res.Metadata.Name,
+							"namespace":           ns,
+							"derived_from_secret": "true",
+							"secret_name":         res.Metadata.Name,
 						},
-						ExpiresAt:  expiresAt,
-						LastSeen:   now,
-						FirstSeen:  now,
+						ExpiresAt: expiresAt,
+						LastSeen:  now,
+						FirstSeen: now,
 					}
 					if expiresAt != nil {
 						certNode.Metadata["not_after"] = expiresAt.UTC().Format(time.RFC3339)
@@ -626,77 +626,77 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 			result.Nodes = append(result.Nodes, node)
 
 		case "RoleBinding", "ClusterRoleBinding":
-	bindingID := k8sNodeID("rolebinding", ns, res.Metadata.Name)
-	if res.Kind == "ClusterRoleBinding" {
-		bindingID = fmt.Sprintf("k8s:clusterrolebinding:%s", res.Metadata.Name)
-	}
+			bindingID := k8sNodeID("rolebinding", ns, res.Metadata.Name)
+			if res.Kind == "ClusterRoleBinding" {
+				bindingID = fmt.Sprintf("k8s:clusterrolebinding:%s", res.Metadata.Name)
+			}
 
-	// Binding → Role/ClusterRole
-	if res.RoleRef != nil {
-		var roleID string
-		if res.RoleRef.Kind == "ClusterRole" {
-			roleID = fmt.Sprintf("k8s:clusterrole:%s", res.RoleRef.Name)
-		} else {
-			roleID = k8sNodeID("role", ns, res.RoleRef.Name)
-		}
+			// Binding → Role/ClusterRole
+			if res.RoleRef != nil {
+				var roleID string
+				if res.RoleRef.Kind == "ClusterRole" {
+					roleID = fmt.Sprintf("k8s:clusterrole:%s", res.RoleRef.Name)
+				} else {
+					roleID = k8sNodeID("role", ns, res.RoleRef.Name)
+				}
 
-		// The referenced role may have been scanned separately, such as a
-		// ClusterRole or a resource in a namespace excluded from live scans.
-		ensureNode(
-			nodeMap,
-			result,
-			roleID,
-			res.RoleRef.Name,
-			models.AssetIAMPolicy,
-			ns,
-			sourceFile,
-			now,
-		)
+				// The referenced role may have been scanned separately, such as a
+				// ClusterRole or a resource in a namespace excluded from live scans.
+				ensureNode(
+					nodeMap,
+					result,
+					roleID,
+					res.RoleRef.Name,
+					models.AssetIAMPolicy,
+					ns,
+					sourceFile,
+					now,
+				)
 
-		eid := fmt.Sprintf("%s->depends_on->%s", bindingID, roleID)
-		result.Edges = append(result.Edges, models.Edge{
-			ID:       eid,
-			FromID:   bindingID,
-			ToID:     roleID,
-			Type:     models.EdgeDependsOn,
-			Metadata: map[string]string{"via": "roleRef"},
-		})
-	}
+				eid := fmt.Sprintf("%s->depends_on->%s", bindingID, roleID)
+				result.Edges = append(result.Edges, models.Edge{
+					ID:       eid,
+					FromID:   bindingID,
+					ToID:     roleID,
+					Type:     models.EdgeDependsOn,
+					Metadata: map[string]string{"via": "roleRef"},
+				})
+			}
 
-	// ServiceAccount subjects may live in another namespace, including
-	// kube-system, which the automatic live scanner skips by default.
-	for _, subj := range res.Subjects {
-		if subj.Kind != "ServiceAccount" {
-			continue
-		}
+			// ServiceAccount subjects may live in another namespace, including
+			// kube-system, which the automatic live scanner skips by default.
+			for _, subj := range res.Subjects {
+				if subj.Kind != "ServiceAccount" {
+					continue
+				}
 
-		subjNs := subj.Namespace
-		if subjNs == "" {
-			subjNs = ns
-		}
+				subjNs := subj.Namespace
+				if subjNs == "" {
+					subjNs = ns
+				}
 
-		saID := k8sNodeID("serviceaccount", subjNs, subj.Name)
+				saID := k8sNodeID("serviceaccount", subjNs, subj.Name)
 
-		ensureNode(
-			nodeMap,
-			result,
-			saID,
-			subj.Name,
-			models.AssetServiceAccount,
-			subjNs,
-			sourceFile,
-			now,
-		)
+				ensureNode(
+					nodeMap,
+					result,
+					saID,
+					subj.Name,
+					models.AssetServiceAccount,
+					subjNs,
+					sourceFile,
+					now,
+				)
 
-		eid := fmt.Sprintf("%s->managed_by->%s", saID, bindingID)
-		result.Edges = append(result.Edges, models.Edge{
-			ID:       eid,
-			FromID:   saID,
-			ToID:     bindingID,
-			Type:     models.EdgeManagedBy,
-			Metadata: map[string]string{"via": "subject"},
-		})
-	}
+				eid := fmt.Sprintf("%s->managed_by->%s", saID, bindingID)
+				result.Edges = append(result.Edges, models.Edge{
+					ID:       eid,
+					FromID:   saID,
+					ToID:     bindingID,
+					Type:     models.EdgeManagedBy,
+					Metadata: map[string]string{"via": "subject"},
+				})
+			}
 		case "NetworkPolicy":
 			nodeID := k8sNodeID("networkpolicy", ns, res.Metadata.Name)
 			meta := map[string]string{"namespace": ns}
@@ -925,7 +925,7 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 							Metadata: map[string]string{"via": "volume"},
 						})
 					}
-				ensureNode(nodeMap, result, secretID, vol.Secret.SecretName, models.AssetSecret, ns, sourceFile, now)
+					ensureNode(nodeMap, result, secretID, vol.Secret.SecretName, models.AssetSecret, ns, sourceFile, now)
 				}
 				if vol.ConfigMap != nil && vol.ConfigMap.Name != "" {
 					cmID := k8sNodeID("configmap", ns, vol.ConfigMap.Name)
@@ -940,7 +940,7 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 							Metadata: map[string]string{"via": "volume"},
 						})
 					}
-				ensureNode(nodeMap, result, cmID, vol.ConfigMap.Name, models.AssetConfigMap, ns, sourceFile, now)
+					ensureNode(nodeMap, result, cmID, vol.ConfigMap.Name, models.AssetConfigMap, ns, sourceFile, now)
 				}
 			}
 
@@ -961,7 +961,7 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 								Metadata: map[string]string{"via": "envFrom"},
 							})
 						}
-					ensureNode(nodeMap, result, secretID, ef.SecretRef.Name, models.AssetSecret, ns, sourceFile, now)
+						ensureNode(nodeMap, result, secretID, ef.SecretRef.Name, models.AssetSecret, ns, sourceFile, now)
 					}
 					if ef.ConfigMapRef != nil && ef.ConfigMapRef.Name != "" {
 						cmID := k8sNodeID("configmap", ns, ef.ConfigMapRef.Name)
@@ -976,7 +976,7 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 								Metadata: map[string]string{"via": "envFrom"},
 							})
 						}
-					ensureNode(nodeMap, result, cmID, ef.ConfigMapRef.Name, models.AssetConfigMap, ns, sourceFile, now)
+						ensureNode(nodeMap, result, cmID, ef.ConfigMapRef.Name, models.AssetConfigMap, ns, sourceFile, now)
 						for key, value := range configMapData[cmID] {
 							connectivityValues["configmap:"+ef.ConfigMapRef.Name+":"+key] = value
 						}
@@ -1002,7 +1002,7 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 								Metadata: map[string]string{"via": "env"},
 							})
 						}
-					ensureNode(nodeMap, result, secretID, env.ValueFrom.SecretKeyRef.Name, models.AssetSecret, ns, sourceFile, now)
+						ensureNode(nodeMap, result, secretID, env.ValueFrom.SecretKeyRef.Name, models.AssetSecret, ns, sourceFile, now)
 					}
 					if env.ValueFrom.ConfigMapKeyRef != nil && env.ValueFrom.ConfigMapKeyRef.Name != "" {
 						cmID := k8sNodeID("configmap", ns, env.ValueFrom.ConfigMapKeyRef.Name)
@@ -1017,7 +1017,7 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 								Metadata: map[string]string{"via": "env"},
 							})
 						}
-					ensureNode(nodeMap, result, cmID, env.ValueFrom.ConfigMapKeyRef.Name, models.AssetConfigMap, ns, sourceFile, now)
+						ensureNode(nodeMap, result, cmID, env.ValueFrom.ConfigMapKeyRef.Name, models.AssetConfigMap, ns, sourceFile, now)
 						if env.ValueFrom.ConfigMapKeyRef.Key != "" {
 							if cmValues, ok := configMapData[cmID]; ok {
 								if value, exists := cmValues[env.ValueFrom.ConfigMapKeyRef.Key]; exists {
@@ -1042,7 +1042,7 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 						ToID:   svcID,
 						Type:   models.EdgeConnectsTo,
 						Metadata: map[string]string{
-							"via":      source,
+							"via":       source,
 							"raw_value": value,
 						},
 					})
@@ -1085,34 +1085,73 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 			if res.Kind == "ClusterRoleBinding" {
 				bindingID = fmt.Sprintf("k8s:clusterrolebinding:%s", res.Metadata.Name)
 			}
+
 			// Binding → Role/ClusterRole
 			if res.RoleRef != nil {
 				var roleID string
+				var roleNamespace string
+
 				if res.RoleRef.Kind == "ClusterRole" {
 					roleID = fmt.Sprintf("k8s:clusterrole:%s", res.RoleRef.Name)
+					roleNamespace = ""
 				} else {
 					roleID = k8sNodeID("role", ns, res.RoleRef.Name)
+					roleNamespace = ns
 				}
+
+				ensureNode(
+					nodeMap,
+					result,
+					roleID,
+					res.RoleRef.Name,
+					models.AssetIAMPolicy,
+					roleNamespace,
+					sourceFile,
+					now,
+				)
+
 				eid := fmt.Sprintf("%s->depends_on->%s", bindingID, roleID)
 				result.Edges = append(result.Edges, models.Edge{
-					ID: eid, FromID: bindingID, ToID: roleID,
-					Type: models.EdgeDependsOn, Metadata: map[string]string{"via": "roleRef"},
+					ID:       eid,
+					FromID:   bindingID,
+					ToID:     roleID,
+					Type:     models.EdgeDependsOn,
+					Metadata: map[string]string{"via": "roleRef"},
 				})
 			}
-			// Binding → Subjects (ServiceAccounts)
+
+			// Binding → ServiceAccount subjects
 			for _, subj := range res.Subjects {
-				if subj.Kind == "ServiceAccount" {
-					subjNs := subj.Namespace
-					if subjNs == "" {
-						subjNs = ns
-					}
-					saID := k8sNodeID("serviceaccount", subjNs, subj.Name)
-					eid := fmt.Sprintf("%s->managed_by->%s", saID, bindingID)
-					result.Edges = append(result.Edges, models.Edge{
-						ID: eid, FromID: saID, ToID: bindingID,
-						Type: models.EdgeManagedBy, Metadata: map[string]string{"via": "subject"},
-					})
+				if subj.Kind != "ServiceAccount" {
+					continue
 				}
+
+				subjNs := subj.Namespace
+				if subjNs == "" {
+					subjNs = ns
+				}
+
+				saID := k8sNodeID("serviceaccount", subjNs, subj.Name)
+
+				ensureNode(
+					nodeMap,
+					result,
+					saID,
+					subj.Name,
+					models.AssetServiceAccount,
+					subjNs,
+					sourceFile,
+					now,
+				)
+
+				eid := fmt.Sprintf("%s->managed_by->%s", saID, bindingID)
+				result.Edges = append(result.Edges, models.Edge{
+					ID:       eid,
+					FromID:   saID,
+					ToID:     bindingID,
+					Type:     models.EdgeManagedBy,
+					Metadata: map[string]string{"via": "subject"},
+				})
 			}
 
 		case "NetworkPolicy":
