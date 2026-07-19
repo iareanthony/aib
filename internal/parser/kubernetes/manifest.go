@@ -626,77 +626,19 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 			result.Nodes = append(result.Nodes, node)
 
 		case "RoleBinding", "ClusterRoleBinding":
-			bindingID := k8sNodeID("rolebinding", ns, res.Metadata.Name)
+			nodeID := k8sNodeID("rolebinding", ns, res.Metadata.Name)
 			if res.Kind == "ClusterRoleBinding" {
-				bindingID = fmt.Sprintf("k8s:clusterrolebinding:%s", res.Metadata.Name)
+				nodeID = fmt.Sprintf("k8s:clusterrolebinding:%s", res.Metadata.Name)
 			}
-
-			// Binding → Role/ClusterRole
-			if res.RoleRef != nil {
-				var roleID string
-				if res.RoleRef.Kind == "ClusterRole" {
-					roleID = fmt.Sprintf("k8s:clusterrole:%s", res.RoleRef.Name)
-				} else {
-					roleID = k8sNodeID("role", ns, res.RoleRef.Name)
-				}
-
-				// The referenced role may have been scanned separately, such as a
-				// ClusterRole or a resource in a namespace excluded from live scans.
-				ensureNode(
-					nodeMap,
-					result,
-					roleID,
-					res.RoleRef.Name,
-					models.AssetIAMPolicy,
-					ns,
-					sourceFile,
-					now,
-				)
-
-				eid := fmt.Sprintf("%s->depends_on->%s", bindingID, roleID)
-				result.Edges = append(result.Edges, models.Edge{
-					ID:       eid,
-					FromID:   bindingID,
-					ToID:     roleID,
-					Type:     models.EdgeDependsOn,
-					Metadata: map[string]string{"via": "roleRef"},
-				})
+			meta := map[string]string{"kind": res.Kind, "namespace": ns}
+			node := models.Node{
+				ID: nodeID, Name: res.Metadata.Name, Type: models.AssetIAMBinding,
+				Source: "kubernetes", SourceFile: sourceFile, Provider: "kubernetes",
+				Metadata: meta, LastSeen: now, FirstSeen: now,
 			}
+			nodeMap[nodeID] = node
+			result.Nodes = append(result.Nodes, node)
 
-			// ServiceAccount subjects may live in another namespace, including
-			// kube-system, which the automatic live scanner skips by default.
-			for _, subj := range res.Subjects {
-				if subj.Kind != "ServiceAccount" {
-					continue
-				}
-
-				subjNs := subj.Namespace
-				if subjNs == "" {
-					subjNs = ns
-				}
-
-				saID := k8sNodeID("serviceaccount", subjNs, subj.Name)
-
-				ensureNode(
-					nodeMap,
-					result,
-					saID,
-					subj.Name,
-					models.AssetServiceAccount,
-					subjNs,
-					sourceFile,
-					now,
-				)
-
-				eid := fmt.Sprintf("%s->managed_by->%s", saID, bindingID)
-				result.Edges = append(result.Edges, models.Edge{
-					ID:       eid,
-					FromID:   saID,
-					ToID:     bindingID,
-					Type:     models.EdgeManagedBy,
-					Metadata: map[string]string{"via": "subject"},
-				})
-			}
 		case "NetworkPolicy":
 			nodeID := k8sNodeID("networkpolicy", ns, res.Metadata.Name)
 			meta := map[string]string{"namespace": ns}
@@ -1085,73 +1027,57 @@ func parseManifests(data []byte, sourceFile string, now time.Time) (*parser.Pars
 			if res.Kind == "ClusterRoleBinding" {
 				bindingID = fmt.Sprintf("k8s:clusterrolebinding:%s", res.Metadata.Name)
 			}
-
 			// Binding → Role/ClusterRole
 			if res.RoleRef != nil {
 				var roleID string
-				var roleNamespace string
-
 				if res.RoleRef.Kind == "ClusterRole" {
 					roleID = fmt.Sprintf("k8s:clusterrole:%s", res.RoleRef.Name)
-					roleNamespace = ""
 				} else {
 					roleID = k8sNodeID("role", ns, res.RoleRef.Name)
-					roleNamespace = ns
 				}
-
 				ensureNode(
 					nodeMap,
 					result,
 					roleID,
 					res.RoleRef.Name,
 					models.AssetIAMPolicy,
-					roleNamespace,
+					ns,
 					sourceFile,
 					now,
 				)
 
 				eid := fmt.Sprintf("%s->depends_on->%s", bindingID, roleID)
 				result.Edges = append(result.Edges, models.Edge{
-					ID:       eid,
-					FromID:   bindingID,
-					ToID:     roleID,
-					Type:     models.EdgeDependsOn,
-					Metadata: map[string]string{"via": "roleRef"},
+					ID: eid, FromID: bindingID, ToID: roleID,
+					Type: models.EdgeDependsOn, Metadata: map[string]string{"via": "roleRef"},
 				})
 			}
-
-			// Binding → ServiceAccount subjects
+			// Binding → Subjects (ServiceAccounts)
 			for _, subj := range res.Subjects {
-				if subj.Kind != "ServiceAccount" {
-					continue
+				if subj.Kind == "ServiceAccount" {
+					subjNs := subj.Namespace
+					if subjNs == "" {
+						subjNs = ns
+					}
+					saID := k8sNodeID("serviceaccount", subjNs, subj.Name)
+
+					ensureNode(
+						nodeMap,
+						result,
+						saID,
+						subj.Name,
+						models.AssetServiceAccount,
+						subjNs,
+						sourceFile,
+						now,
+					)
+
+					eid := fmt.Sprintf("%s->managed_by->%s", saID, bindingID)
+					result.Edges = append(result.Edges, models.Edge{
+						ID: eid, FromID: saID, ToID: bindingID,
+						Type: models.EdgeManagedBy, Metadata: map[string]string{"via": "subject"},
+					})
 				}
-
-				subjNs := subj.Namespace
-				if subjNs == "" {
-					subjNs = ns
-				}
-
-				saID := k8sNodeID("serviceaccount", subjNs, subj.Name)
-
-				ensureNode(
-					nodeMap,
-					result,
-					saID,
-					subj.Name,
-					models.AssetServiceAccount,
-					subjNs,
-					sourceFile,
-					now,
-				)
-
-				eid := fmt.Sprintf("%s->managed_by->%s", saID, bindingID)
-				result.Edges = append(result.Edges, models.Edge{
-					ID:       eid,
-					FromID:   saID,
-					ToID:     bindingID,
-					Type:     models.EdgeManagedBy,
-					Metadata: map[string]string{"via": "subject"},
-				})
 			}
 
 		case "NetworkPolicy":
