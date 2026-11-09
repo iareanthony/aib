@@ -274,7 +274,7 @@ make clean       # Remove build artifacts
 ```
 
 Container releases rebuild without cache from current Alpine base packages. The
-Kubernetes image uses Alpine 3.23 and kubectl 1.36.5.
+Kubernetes image uses Alpine 3.23, Go 1.27, and kubectl 1.37.0.
 
 ## License
 
