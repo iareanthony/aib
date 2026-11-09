@@ -1,6 +1,6 @@
-FROM registry.k8s.io/kubectl:v1.33.3 AS kubectl
+FROM registry.k8s.io/kubectl:v1.36.5 AS kubectl
 
-FROM golang:1.25-alpine AS builder
+FROM golang:1.25-alpine3.23 AS builder
 
 WORKDIR /src
 
@@ -15,9 +15,10 @@ RUN CGO_ENABLED=0 go build \
     -o /aib \
     ./cmd/aib
 
-FROM alpine:3.21
+FROM alpine:3.23
 
-RUN apk add --no-cache \
+RUN apk upgrade --no-cache \
+    && apk add --no-cache \
       ca-certificates \
       tzdata \
     && addgroup -g 10001 aib \

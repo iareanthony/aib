@@ -273,6 +273,9 @@ make lint        # Run linter
 make clean       # Remove build artifacts
 ```
 
+Container releases rebuild without cache from current Alpine base packages. The
+Kubernetes image uses Alpine 3.23 and kubectl 1.36.5.
+
 ## License
 
 Apache 2.0
